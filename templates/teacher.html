@@ -113,6 +113,11 @@
               <span class="badge badge-premium ms-1">精品</span>
             </h6>
             <p class="small text-muted mb-2">{{ c['description'] or '（无简介）' }}</p>
+            <div class="small text-muted mb-2">
+              {% if c['teacher'] %}<div>👩‍🏫 授课教师：<b>{{ c['teacher'] }}</b></div>{% endif %}
+              {% if c['location'] %}<div>📍 上课地点：{{ c['location'] }}</div>{% endif %}
+              {% if c['schedule'] %}<div>🕐 上课时间：{{ c['schedule'] }}</div>{% endif %}
+            </div>
             <div class="mb-2">
               <div class="d-flex justify-content-between small">
                 <span>报名人数</span>
@@ -141,6 +146,11 @@
               <span class="badge badge-ordinary ms-1">普通</span>
             </h6>
             <p class="small text-muted mb-2">{{ c['description'] or '（无简介）' }}</p>
+            <div class="small text-muted mb-2">
+              {% if c['teacher'] %}<div>👩‍🏫 授课教师：<b>{{ c['teacher'] }}</b></div>{% endif %}
+              {% if c['location'] %}<div>📍 上课地点：{{ c['location'] }}</div>{% endif %}
+              {% if c['schedule'] %}<div>🕐 上课时间：{{ c['schedule'] }}</div>{% endif %}
+            </div>
             <div class="mb-2">
               <div class="d-flex justify-content-between small">
                 <span>报名人数</span>
