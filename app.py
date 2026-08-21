@@ -76,6 +76,9 @@ def init_db():
         type TEXT NOT NULL CHECK(type IN ('ordinary','premium')),
         grade TEXT,                    -- 普通社团所属年级；精品社团为 NULL（全校共用）
         description TEXT DEFAULT '',
+        teacher TEXT DEFAULT '',       -- 授课教师
+        location TEXT DEFAULT '',      -- 上课地点
+        schedule TEXT DEFAULT '',      -- 上课时间
         max_students INTEGER DEFAULT 30,
         is_active INTEGER DEFAULT 1,
         created_at TEXT DEFAULT (datetime('now','localtime'))
@@ -93,6 +96,17 @@ def init_db():
         FOREIGN KEY (class_id) REFERENCES class_accounts(id)
     );
     ''')
+    # 迁移：为已存在的 clubs 表补充新增字段（幂等）
+    try:
+        cols = [r[1] for r in db.execute("PRAGMA table_info(clubs)").fetchall()]
+        for col, ddl in [('teacher', 'TEXT DEFAULT \'\''),
+                         ('location', 'TEXT DEFAULT \'\''),
+                         ('schedule', 'TEXT DEFAULT \'\'')]:
+            if col not in cols:
+                db.execute(f'ALTER TABLE clubs ADD COLUMN {col} {ddl}')
+    except Exception:
+        pass
+
     # 默认管理员
     cur = db.execute("SELECT COUNT(*) FROM admin_users WHERE username='admin'")
     if cur.fetchone()[0] == 0:
@@ -290,6 +304,9 @@ def admin_club_create():
     grade = request.form.get('grade') or None
     max_students = request.form.get('max_students', MAX_STUDENTS_DEFAULT)
     description = request.form.get('description', '').strip()
+    teacher = request.form.get('teacher', '').strip()
+    location = request.form.get('location', '').strip()
+    schedule = request.form.get('schedule', '').strip()
     db = get_db()
 
     if not name or ctype not in ('ordinary', 'premium'):
@@ -307,9 +324,9 @@ def admin_club_create():
         return redirect(url_for('admin_dashboard'))
 
     db.execute('''
-        INSERT INTO clubs (name, type, grade, description, max_students)
-        VALUES (?,?,?,?,?)
-    ''', (name, ctype, grade, description, max_students))
+        INSERT INTO clubs (name, type, grade, description, teacher, location, schedule, max_students)
+        VALUES (?,?,?,?,?,?,?,?)
+    ''', (name, ctype, grade, description, teacher, location, schedule, max_students))
     db.commit()
     flash(f'社团 "{name}" 创建成功', 'success')
     return redirect(url_for('admin_dashboard'))
@@ -337,7 +354,7 @@ def admin_club_delete(cid):
     return redirect(url_for('admin_dashboard'))
 
 
-# 班级账号批量创建
+# 班级账号批量创建（文本框粘贴，每行"班级名,年级"）
 @app.route('/admin/classes', methods=['GET', 'POST'])
 def admin_classes():
     if not session.get('role') == 'admin':
@@ -377,6 +394,83 @@ def admin_classes():
 
     classes = db.execute('SELECT * FROM class_accounts ORDER BY id').fetchall()
     return render_template('admin_classes.html', classes=classes)
+
+
+# 批量导入班级账号（CSV 上传）
+@app.route('/admin/classes/import', methods=['POST'])
+def admin_classes_import():
+    if not session.get('role') == 'admin':
+        return redirect(url_for('login'))
+    db = get_db()
+    file = request.files.get('file')
+    if not file or not file.filename:
+        flash('请选择 CSV 文件', 'danger')
+        return redirect(url_for('admin_classes'))
+
+    raw = file.read()
+    text = None
+    for enc in ('utf-8-sig', 'utf-8', 'gbk'):
+        try:
+            text = raw.decode(enc)
+            break
+        except UnicodeDecodeError:
+            continue
+    if text is None:
+        flash('无法识别文件编码（支持 UTF-8 / GBK）', 'danger')
+        return redirect(url_for('admin_classes'))
+
+    created = 0
+    errors = []
+    try:
+        reader = csv.reader(io.StringIO(text))
+        for row in reader:
+            if not row:
+                continue
+            parts = [p.strip() for p in (row[0].split(',') if len(row) == 1 else row)]
+            cls_name = parts[0]
+            if not cls_name:
+                continue
+            # 跳过表头
+            if cls_name in ('班级名', '班级', 'class', 'Class', '班级名称'):
+                continue
+            grade = parts[1] if len(parts) > 1 else _guess_grade(cls_name)
+            if not grade:
+                errors.append(f'{cls_name}: 无法识别年级，请用 "班级名,年级" 格式')
+                continue
+            username = 'bj' + _pinyin_short(cls_name)
+            password = '123456'
+            try:
+                db.execute('''
+                    INSERT INTO class_accounts (class_name, grade, username, password)
+                    VALUES (?,?,?,?)
+                ''', (cls_name, grade, username, password))
+                created += 1
+            except sqlite3.IntegrityError:
+                errors.append(f'{cls_name}: 已存在，跳过')
+    except Exception as e:
+        flash(f'导入失败：{str(e)}', 'danger')
+        return redirect(url_for('admin_classes'))
+
+    db.commit()
+    if created:
+        flash(f'CSV 成功导入 {created} 个班级账号（默认密码 123456）', 'success')
+    for e in errors:
+        flash(e, 'warning')
+    if created == 0 and not errors:
+        flash('CSV 中没有可导入的班级', 'warning')
+    return redirect(url_for('admin_classes'))
+
+
+# 班级 CSV 模板下载
+@app.route('/admin/class-template')
+def admin_class_template():
+    if not session.get('role') == 'admin':
+        return redirect(url_for('login'))
+    data = '班级名,年级\n一年级1班,一年级\n二年级1班,二年级\n六年级3班,六年级\n'.encode('utf-8-sig')
+    resp = make_response(data)
+    resp.headers['Content-Type'] = 'text/csv; charset=utf-8'
+    resp.headers['Content-Disposition'] = 'attachment; filename="class_template.csv"'
+    return resp
 
 
 @app.route('/admin/class/delete/<int:cid>', methods=['POST'])
