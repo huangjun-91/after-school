@@ -61,6 +61,15 @@ def init_db():
         password TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS students (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        class_id INTEGER NOT NULL,
+        student_name TEXT NOT NULL,
+        created_at TEXT DEFAULT (datetime('now','localtime')),
+        UNIQUE(class_id, student_name),
+        FOREIGN KEY (class_id) REFERENCES class_accounts(id)
+    );
+
     CREATE TABLE IF NOT EXISTS clubs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
@@ -184,9 +193,17 @@ def teacher_dashboard():
             'full': cnt >= c['max_students'],
         }
 
+    # 本班学生名单（管理员批量导入的）
+    students = db.execute('''
+        SELECT s.*,
+          (SELECT COUNT(*) FROM registrations r
+           WHERE r.student_name=s.student_name AND r.class_id=s.class_id AND r.status != 'rejected') AS has_reg
+        FROM students s WHERE s.class_id=? ORDER BY s.id
+    ''', (class_id,)).fetchall()
+
     return render_template('teacher.html', regs=regs, clubs=clubs,
                            club_info=club_info, grade=grade,
-                           class_name=session['class_name'])
+                           class_name=session['class_name'], students=students)
 
 
 @app.route('/teacher/submit', methods=['POST'])
@@ -368,9 +385,116 @@ def admin_class_delete(cid):
         return redirect(url_for('login'))
     db = get_db()
     db.execute("DELETE FROM registrations WHERE class_id=?", (cid,))
+    db.execute("DELETE FROM students WHERE class_id=?", (cid,))
     db.execute("DELETE FROM class_accounts WHERE id=?", (cid,))
     db.commit()
     flash('班级账号已删除', 'success')
+    return redirect(url_for('admin_classes'))
+
+
+# 批量导入学生名单（CSV 上传）
+@app.route('/admin/class/<int:cid>/import', methods=['POST'])
+def admin_class_import(cid):
+    if not session.get('role') == 'admin':
+        return redirect(url_for('login'))
+    db = get_db()
+    cls = db.execute("SELECT * FROM class_accounts WHERE id=?", (cid,)).fetchone()
+    if not cls:
+        flash('班级不存在', 'danger')
+        return redirect(url_for('admin_classes'))
+
+    file = request.files.get('file')
+    if not file or not file.filename:
+        flash('请选择 CSV 文件', 'danger')
+        return redirect(url_for('admin_classes'))
+
+    # 解析 CSV（处理 UTF-8 BOM 和 GBK 编码）
+    raw = file.read()
+    text = None
+    for enc in ('utf-8-sig', 'utf-8', 'gbk'):
+        try:
+            text = raw.decode(enc)
+            break
+        except UnicodeDecodeError:
+            continue
+    if text is None:
+        flash('无法识别文件编码（支持 UTF-8 / GBK）', 'danger')
+        return redirect(url_for('admin_classes'))
+
+    imported = 0
+    skipped = []
+    try:
+        reader = csv.reader(io.StringIO(text))
+        for row in reader:
+            if not row:
+                continue
+            name = (row[0] if row else '').strip()
+            # 跳过表头
+            if not name or name in ('姓名', '学生姓名', '学生', 'name', 'Name'):
+                continue
+            try:
+                db.execute('''
+                    INSERT INTO students (class_id, student_name) VALUES (?,?)
+                ''', (cid, name))
+                imported += 1
+            except sqlite3.IntegrityError:
+                skipped.append(name)
+    except Exception as e:
+        flash(f'导入失败：{str(e)}', 'danger')
+        return redirect(url_for('admin_classes'))
+
+    db.commit()
+    msg = f'为「{cls["class_name"]}」成功导入 {imported} 名学生'
+    if skipped:
+        msg += f'，跳过重复 {len(skipped)} 名（{", ".join(skipped[:5])}...）'
+    flash(msg, 'success')
+    return redirect(url_for('admin_classes'))
+
+
+# 学生名单 CSV 模板下载
+@app.route('/admin/student-template')
+def admin_student_template():
+    if not session.get('role') == 'admin':
+        return redirect(url_for('login'))
+    data = '姓名\n张三\n李四\n王五\n'.encode('utf-8-sig')
+    resp = make_response(data)
+    resp.headers['Content-Type'] = 'text/csv; charset=utf-8'
+    resp.headers['Content-Disposition'] = 'attachment; filename="student_template.csv"'
+    return resp
+
+
+# 查看班级学生名单
+@app.route('/admin/class/<int:cid>/students')
+def admin_class_students(cid):
+    if not session.get('role') == 'admin':
+        return redirect(url_for('login'))
+    db = get_db()
+    cls = db.execute("SELECT * FROM class_accounts WHERE id=?", (cid,)).fetchone()
+    if not cls:
+        flash('班级不存在', 'danger')
+        return redirect(url_for('admin_classes'))
+    students = db.execute('''
+        SELECT s.*,
+          (SELECT COUNT(*) FROM registrations r
+           WHERE r.student_name=s.student_name AND r.class_id=s.class_id AND r.status != 'rejected') AS has_reg
+        FROM students s WHERE s.class_id=? ORDER BY s.id
+    ''', (cid,)).fetchall()
+    return render_template('admin_class_students.html', cls=cls, students=students)
+
+
+# 删除单个学生（从名单中移除）
+@app.route('/admin/student/delete/<int:sid>', methods=['POST'])
+def admin_student_delete(sid):
+    if not session.get('role') == 'admin':
+        return redirect(url_for('login'))
+    db = get_db()
+    row = db.execute("SELECT * FROM students WHERE id=?", (sid,)).fetchone()
+    if row:
+        cid = row['class_id']
+        db.execute("DELETE FROM students WHERE id=?", (sid,))
+        db.commit()
+        flash('已从名单移除该学生', 'success')
+        return redirect(url_for('admin_class_students', cid=cid))
     return redirect(url_for('admin_classes'))
 
 
