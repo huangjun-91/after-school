@@ -58,6 +58,18 @@
               </select>
             </div>
             <div class="mb-2">
+              <label class="form-label small">授课教师</label>
+              <input type="text" name="teacher" class="form-control" placeholder="如：王老师">
+            </div>
+            <div class="mb-2">
+              <label class="form-label small">上课地点</label>
+              <input type="text" name="location" class="form-control" placeholder="如：体育馆 / 1号教学楼201">
+            </div>
+            <div class="mb-2">
+              <label class="form-label small">上课时间</label>
+              <input type="text" name="schedule" class="form-control" placeholder="如：周一、周三 16:30-17:30">
+            </div>
+            <div class="mb-2">
               <label class="form-label small">人数上限（15-30）</label>
               <input type="number" name="max_students" class="form-control" value="30" min="15" max="30" required>
             </div>
@@ -86,7 +98,16 @@
             <tbody>
               {% for c in clubs %}
               <tr>
-                <td>{{ c['name'] }}</td>
+                <td>
+                  {{ c['name'] }}
+                  {% if c['teacher'] or c['location'] or c['schedule'] %}
+                    <div class="small text-muted">
+                      {% if c['teacher'] %}👩‍🏫{{ c['teacher'] }}<br>{% endif %}
+                      {% if c['location'] %}📍{{ c['location'] }}<br>{% endif %}
+                      {% if c['schedule'] %}🕐{{ c['schedule'] }}{% endif %}
+                    </div>
+                  {% endif %}
+                </td>
                 <td><span class="badge {% if c['type']=='premium' %}text-bg-warning{% else %}text-bg-secondary{% endif %}">
                   {{ '精品(全校)' if c['type']=='premium' else '普通' }}</span></td>
                 <td>{{ c['grade'] or '全校' }}</td>
