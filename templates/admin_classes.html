@@ -56,7 +56,7 @@
         <div class="card-header bg-white">班级账号列表（{{ classes|length }}）</div>
         <div class="table-responsive">
           <table class="table table-sm align-middle mb-0">
-            <thead><tr><th>班级</th><th>年级</th><th>账号</th><th>密码</th><th>操作</th></tr></thead>
+            <thead><tr><th>班级</th><th>年级</th><th>账号</th><th>密码</th><th>学生</th><th>操作</th></tr></thead>
             <tbody>
               {% for c in classes %}
               <tr>
@@ -65,8 +65,19 @@
                 <td><code>{{ c['username'] }}</code></td>
                 <td><code>{{ c['password'] }}</code></td>
                 <td>
+                  <a href="{{ url_for('admin_class_students', cid=c['id']) }}" class="btn btn-sm btn-outline-info">名单</a>
+                </td>
+                <td class="text-nowrap">
+                  <!-- 导入学生 CSV -->
+                  <form method="post" action="{{ url_for('admin_class_import', cid=c['id']) }}"
+                        enctype="multipart/form-data" class="d-inline">
+                    <button type="button" class="btn btn-sm btn-outline-success"
+                            onclick="this.parentElement.querySelector('input[type=file]').click()">导入学生</button>
+                    <input type="file" name="file" accept=".csv" style="display:none"
+                           onchange="this.form.submit()">
+                  </form>
                   <form method="post" action="{{ url_for('admin_class_delete', cid=c['id']) }}"
-                        onsubmit="return confirm('删除该班级账号及其所有报名？')">
+                        onsubmit="return confirm('删除该班级账号及其所有报名？')" class="d-inline">
                     <button class="btn btn-sm btn-outline-danger">删除</button>
                   </form>
                 </td>
