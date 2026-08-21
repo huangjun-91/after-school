@@ -49,6 +49,29 @@
           </form>
         </div>
       </div>
+
+      <!-- 批量导入班级 CSV -->
+      <div class="card shadow-sm mt-3">
+        <div class="card-header bg-white">📄 批量导入班级（CSV）</div>
+        <div class="card-body">
+          <div class="small text-muted mb-2">
+            CSV 格式：第一列班级名，第二列年级，每行一个班级。
+            支持 UTF-8 / GBK 编码。生成账号格式：<code>bj+数字</code>，默认密码：<code>123456</code>
+          </div>
+          <div class="d-flex gap-2">
+            <form method="post" action="{{ url_for('admin_classes_import') }}"
+                  enctype="multipart/form-data" class="flex-grow-1">
+              <div class="input-group input-group-sm">
+                <input type="file" name="file" accept=".csv" class="form-control"
+                       required onchange="this.form.submit()">
+                <button class="btn btn-outline-success" type="button"
+                        onclick="this.parentElement.querySelector('input[type=file]').click()">上传导入</button>
+              </div>
+            </form>
+            <a href="{{ url_for('admin_class_template') }}" class="btn btn-sm btn-outline-secondary text-nowrap">下载模板</a>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div class="col-md-7">
