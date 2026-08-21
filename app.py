@@ -58,7 +58,10 @@ def init_db():
         class_name TEXT UNIQUE NOT NULL,
         grade TEXT NOT NULL,
         username TEXT UNIQUE NOT NULL,
-        password TEXT NOT NULL
+        password TEXT NOT NULL,
+        teacher TEXT DEFAULT '',       -- 任课教师
+        location TEXT DEFAULT '',      -- 上课地点
+        schedule TEXT DEFAULT ''       -- 上课时间
     );
 
     CREATE TABLE IF NOT EXISTS students (
@@ -104,6 +107,17 @@ def init_db():
                          ('schedule', 'TEXT DEFAULT \'\'')]:
             if col not in cols:
                 db.execute(f'ALTER TABLE clubs ADD COLUMN {col} {ddl}')
+    except Exception:
+        pass
+
+    # 迁移：为已存在的 class_accounts 表补充任课教师/地点/时间字段（幂等）
+    try:
+        cols = [r[1] for r in db.execute("PRAGMA table_info(class_accounts)").fetchall()]
+        for col, ddl in [('teacher', 'TEXT DEFAULT \'\''),
+                         ('location', 'TEXT DEFAULT \'\''),
+                         ('schedule', 'TEXT DEFAULT \'\'')]:
+            if col not in cols:
+                db.execute(f'ALTER TABLE class_accounts ADD COLUMN {col} {ddl}')
     except Exception:
         pass
 
@@ -215,9 +229,13 @@ def teacher_dashboard():
         FROM students s WHERE s.class_id=? ORDER BY s.id
     ''', (class_id,)).fetchall()
 
+    # 本班任课教师/上课地点/上课时间（由 CSV 导入时填写）
+    cls = db.execute("SELECT * FROM class_accounts WHERE id=?", (class_id,)).fetchone()
+
     return render_template('teacher.html', regs=regs, clubs=clubs,
                            club_info=club_info, grade=grade,
-                           class_name=session['class_name'], students=students)
+                           class_name=session['class_name'], students=students,
+                           cls=cls)
 
 
 @app.route('/teacher/submit', methods=['POST'])
@@ -368,20 +386,24 @@ def admin_classes():
             line = line.strip()
             if not line:
                 continue
-            # 支持格式："班级名,年级" 或 "班级名"（自动从班级名解析年级）
+            # 支持格式："班级名,年级" 或 "班级名"（自动从班级名解析年级），
+            # 也可带任课教师/上课地点/上课时间："班级名,年级,教师,地点,时间"
             parts = [p.strip() for p in line.split(',')]
             cls_name = parts[0]
             grade = parts[1] if len(parts) > 1 else _guess_grade(cls_name)
             if not grade:
                 errors.append(f'{cls_name}: 无法识别年级，请用 "班级名,年级" 格式')
                 continue
+            teacher = parts[2] if len(parts) > 2 else ''
+            location = parts[3] if len(parts) > 3 else ''
+            schedule = parts[4] if len(parts) > 4 else ''
             username = 'bj' + _pinyin_short(cls_name)
             password = '123456'
             try:
                 db.execute('''
-                    INSERT INTO class_accounts (class_name, grade, username, password)
-                    VALUES (?,?,?,?)
-                ''', (cls_name, grade, username, password))
+                    INSERT INTO class_accounts (class_name, grade, username, password, teacher, location, schedule)
+                    VALUES (?,?,?,?,?,?,?)
+                ''', (cls_name, grade, username, password, teacher, location, schedule))
                 created += 1
             except sqlite3.IntegrityError:
                 errors.append(f'{cls_name}: 已存在，跳过')
@@ -437,13 +459,17 @@ def admin_classes_import():
             if not grade:
                 errors.append(f'{cls_name}: 无法识别年级，请用 "班级名,年级" 格式')
                 continue
+            # 可选列：任课教师/上课地点/上课时间（"班级名,年级,教师,地点,时间"）
+            teacher = parts[2] if len(parts) > 2 else ''
+            location = parts[3] if len(parts) > 3 else ''
+            schedule = parts[4] if len(parts) > 4 else ''
             username = 'bj' + _pinyin_short(cls_name)
             password = '123456'
             try:
                 db.execute('''
-                    INSERT INTO class_accounts (class_name, grade, username, password)
-                    VALUES (?,?,?,?)
-                ''', (cls_name, grade, username, password))
+                    INSERT INTO class_accounts (class_name, grade, username, password, teacher, location, schedule)
+                    VALUES (?,?,?,?,?,?,?)
+                ''', (cls_name, grade, username, password, teacher, location, schedule))
                 created += 1
             except sqlite3.IntegrityError:
                 errors.append(f'{cls_name}: 已存在，跳过')
@@ -466,7 +492,10 @@ def admin_classes_import():
 def admin_class_template():
     if not session.get('role') == 'admin':
         return redirect(url_for('login'))
-    data = '班级名,年级\n一年级1班,一年级\n二年级1班,二年级\n六年级3班,六年级\n'.encode('utf-8-sig')
+    data = ('班级名,年级,任课教师,上课地点,上课时间\n'
+            '一年级1班,一年级,王老师,1号教学楼101,周一 16:30-17:30\n'
+            '二年级1班,二年级,李老师,2号教学楼202,周二 16:30-17:30\n'
+            '六年级3班,六年级,,,\n').encode('utf-8-sig')
     resp = make_response(data)
     resp.headers['Content-Type'] = 'text/csv; charset=utf-8'
     resp.headers['Content-Disposition'] = 'attachment; filename="class_template.csv"'
