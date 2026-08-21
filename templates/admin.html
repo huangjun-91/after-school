@@ -17,6 +17,7 @@
     <div class="navbar-nav">
       <a class="nav-link" href="{{ url_for('admin_dashboard') }}">社团管理</a>
       <a class="nav-link" href="{{ url_for('admin_classes') }}">班级账号</a>
+      <a class="nav-link" href="{{ url_for('admin_students') }}">全校学生</a>
       <a class="nav-link" href="{{ url_for('admin_registrations') }}">报名审核</a>
       <a class="nav-link" href="{{ url_for('admin_export') }}">导出CSV</a>
     </div>
@@ -79,6 +80,27 @@
             </div>
             <button class="btn btn-primary w-100">创建社团</button>
           </form>
+        </div>
+      </div>
+
+      <!-- CSV 批量导入社团 -->
+      <div class="card shadow-sm mt-3">
+        <div class="card-header bg-white">📄 批量导入社团（CSV）</div>
+        <div class="card-body">
+          <div class="small text-muted mb-2">
+            一行一个社团，格式：<code>社团名称,类型,所属年级,授课教师,上课地点,上课时间,人数上限,简介</code><br>
+            类型填 <code>普通</code> 或 <code>精品</code>（精品社团年级留空）。支持 UTF-8 / GBK。
+          </div>
+          <form method="post" action="{{ url_for('admin_clubs_import') }}"
+                enctype="multipart/form-data">
+            <div class="input-group input-group-sm mb-2">
+              <input type="file" name="file" accept=".csv" class="form-control"
+                     required onchange="this.form.submit()">
+              <button class="btn btn-outline-success" type="button"
+                      onclick="this.parentElement.querySelector('input[type=file]').click()">上传导入</button>
+            </div>
+          </form>
+          <a href="{{ url_for('admin_club_template') }}" class="btn btn-sm btn-outline-secondary w-100">下载 CSV 模板</a>
         </div>
       </div>
     </div>
