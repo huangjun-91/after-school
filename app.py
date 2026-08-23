@@ -263,7 +263,9 @@ def teacher_dashboard():
 
     # 该班主任已报名的学生
     regs = db.execute('''
-        SELECT r.*, c.name AS club_name, c.type AS club_type
+        SELECT r.*, c.name AS club_name, c.type AS club_type,
+               c.teacher AS club_teacher, c.location AS club_location,
+               c.schedule AS club_schedule, c.description AS club_description
         FROM registrations r JOIN clubs c ON r.club_id = c.id
         WHERE r.class_id=? AND r.status != 'rejected'
         ORDER BY r.id DESC
