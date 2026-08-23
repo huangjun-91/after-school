@@ -1648,5 +1648,18 @@ def admin_debug_log():
     return '<pre style="font-size:12px;white-space:pre-wrap">' + content.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;') + '</pre>'
 
 
+# ---------- PWA（手机端安装支持） ----------
+@app.route('/manifest.json')
+def pwa_manifest():
+    from flask import send_from_directory
+    return send_from_directory('static', 'manifest.json', mimetype='application/manifest+json')
+
+
+@app.route('/sw.js')
+def pwa_sw():
+    from flask import send_from_directory
+    return send_from_directory('static', 'sw.js', mimetype='application/javascript')
+
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=True)
