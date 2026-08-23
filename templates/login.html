@@ -23,7 +23,7 @@
       <form method="post">
         <div class="mb-3">
           <label class="form-label">账号</label>
-          <input type="text" name="username" class="form-control" placeholder="班级账号或管理员账号" required>
+          <input type="text" name="username" class="form-control" placeholder="班级账号 / 管理员 / 教师 / 巡课账号" required>
         </div>
         <div class="mb-3">
           <label class="form-label">密码</label>
@@ -32,6 +32,10 @@
         <button type="submit" class="btn btn-primary w-100">登录</button>
       </form>
       <div class="text-center small text-muted mt-3">
+        支持四类账号：<br>
+        <b>管理员</b> / <b>班主任</b>（bj+数字） / <b>教师选课</b> / <b>巡课人员</b>
+      </div>
+      <div class="text-center small text-muted mt-2">
         <a href="{{ url_for('index') }}">返回首页</a>
       </div>
     </div>
