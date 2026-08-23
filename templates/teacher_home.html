@@ -13,6 +13,21 @@
   .full-tag { position:absolute; top:10px; right:10px; }
   .badge-premium { background:linear-gradient(135deg,#f7971e,#ffd200); color:#333; }
   .badge-ordinary { background:#e2e8f0; color:#333; }
+
+  /* ===== 移动端优化 ===== */
+  @media (max-width: 768px) {
+    .container { padding-left:10px; padding-right:10px; }
+    .navbar-brand { font-size:1.05rem; }
+    .club-row { flex-direction:column; align-items:stretch !important; }
+    .club-row form { margin-top:8px; }
+    .club-row form .btn { width:100%; min-height:44px; font-size:.95rem; }
+    .club-row .me-3 { margin-right:0 !important; }
+    /* 教师信息卡三列堆叠 */
+    .m-info-col { border-left:none !important; border-top:1px dashed #cbd5e1; padding-top:8px; margin-top:8px; }
+    /* 新增课程按钮大号 */
+    .card-body form .btn-success { min-height:48px; font-size:1rem; }
+    .card-body form .form-control, .card-body form .form-select { min-height:44px; }
+  }
 </style>
 </head>
 <body>
@@ -37,15 +52,15 @@
   <div class="card shadow-sm mb-4 border-0" style="background:linear-gradient(135deg,#e6fffa,#ccfbf1)">
     <div class="card-body py-3">
       <div class="row text-center align-items-center">
-        <div class="col-md-4">
+        <div class="col-md-4 m-info-col">
           <div class="small text-muted">👤 姓名</div>
           <div class="fw-bold fs-5">{{ teacher['name'] }}</div>
         </div>
-        <div class="col-md-4 border-start">
+        <div class="col-md-4 border-start m-info-col">
           <div class="small text-muted">🔑 账号</div>
           <div class="fw-bold"><code>{{ teacher['username'] }}</code></div>
         </div>
-        <div class="col-md-4 border-start">
+        <div class="col-md-4 border-start m-info-col">
           <div class="small text-muted">🎯 擅长学科</div>
           <div class="fw-bold">
             {% if subjects %}
@@ -70,7 +85,7 @@
           {% if available %}
             {% for c in available %}
               {% set is_reco = c['id'] in recommended_ids %}
-              <div class="d-flex justify-content-between align-items-start border-bottom py-2">
+              <div class="d-flex justify-content-between align-items-start border-bottom py-2 club-row">
                 <div class="me-3">
                   <span class="fw-bold">{{ c['name'] }}</span>
                   <span class="badge {% if c['type']=='premium' %}badge-premium{% else %}badge-ordinary{% endif %} ms-1">
