@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>巡课记录 - 课后服务报名系统</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+<style>
+  body { background:#f4f6fb; }
+  .nav-inspector { background:linear-gradient(135deg,#4338ca,#312e81); }
+  .badge-premium { background:linear-gradient(135deg,#f7971e,#ffd200); color:#333; }
+  .badge-ordinary { background:#e2e8f0; color:#333; }
+  .star { color:#f59e0b; }
+</style>
+</head>
+<body>
+<nav class="navbar navbar-expand navbar-dark nav-inspector">
+  <div class="container">
+    <span class="navbar-brand">🔍 巡课记录</span>
+    <div class="navbar-nav ms-auto">
+      <span class="navbar-text me-3 d-none d-md-inline">巡课人：{{ inspector_name }}</span>
+      <a href="{{ url_for('logout') }}" class="btn btn-outline-light btn-sm">退出</a>
+    </div>
+  </div>
+</nav>
+
+<div class="container py-4">
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for cat, msg in messages %}
+      <div class="alert alert-{{ cat }}">{{ msg }}</div>
+    {% endfor %}
+  {% endwith %}
+
+  <!-- 日期选择 + 概览 -->
+  <div class="card shadow-sm mb-4">
+    <div class="card-body py-3">
+      <form method="get" class="row g-2 align-items-end">
+        <div class="col-md-4">
+          <label class="form-label small">📅 选择巡课日期</label>
+          <input type="date" name="date" class="form-control" value="{{ sel_date }}" max="{{ today }}">
+        </div>
+        <div class="col-md-2">
+          <button class="btn btn-primary">查看当天课表</button>
+        </div>
+        <div class="col-md-4 text-md-end ms-auto small text-muted">
+          共 <b>{{ total_clubs }}</b> 个社团开课，已巡课 <b>{{ inspected }}</b> 个
+        </div>
+      </form>
+    </div>
+  </div>
+
+  {% if sel_date != today %}
+  <div class="alert alert-info py-2">
+    📌 当前查看日期 <b>{{ sel_date }}</b>（不是今天）。可回看历史，直接提交评价即记录在该日期。
+  </div>
+  {% endif %}
+
+  <!-- 当天课表 -->
+  <div class="card shadow-sm">
+    <div class="card-header bg-white">
+      <span>{{ sel_date }} 上课安排</span>
+      <span class="small text-muted ms-2">哪一天 · 哪些人 · 在哪里上课</span>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0">
+        <thead><tr>
+          <th>社团</th><th>类型</th><th>授课教师</th><th>上课地点</th><th>上课时间</th>
+          <th>学生数</th><th>巡课状态</th><th>评价</th>
+        </tr></thead>
+        <tbody>
+          {% for s in schedule %}
+            {% set c = s['club'] %}
+            {% set ins = s['inspection'] %}
+          <tr>
+            <td>
+              {{ c['name'] }}
+              {% if c['description'] %}<div class="small text-muted">{{ c['description'] }}</div>{% endif %}
+            </td>
+            <td><span class="badge {% if c['type']=='premium' %}badge-premium{% else %}badge-ordinary{% endif %}">
+              {{ '精品(全校)' if c['type']=='premium' else '普通·'+(c['grade'] or '') }}</span></td>
+            <td>{{ c['teacher'] or '—' }}</td>
+            <td>{{ c['location'] or '—' }}</td>
+            <td>{{ c['schedule'] or '—' }}</td>
+            <td>{{ c['cnt'] }}</td>
+            <td>
+              {% if ins %}
+                <span class="badge text-bg-success">已巡课</span>
+              {% else %}
+                <span class="badge text-bg-secondary">未巡课</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if ins %}
+                <!-- 已巡课：显示评价 + 可修改 -->
+                <button class="btn btn-sm btn-outline-primary" type="button"
+                        data-bs-toggle="modal" data-bs-target="#modal{{ c['id'] }}">
+                  ⭐ {{ ins['rating'] }} 星 · 修改
+                </button>
+              {% else %}
+                <button class="btn btn-sm btn-primary" type="button"
+                        data-bs-toggle="modal" data-bs-target="#modal{{ c['id'] }}">
+                  巡课评价
+                </button>
+              {% endif %}
+            </td>
+          </tr>
+          {% if ins %}
+          <tr class="table-light">
+            <td colspan="8" class="small">
+              <span class="text-muted">巡课人：{{ ins['inspector'] }} · {{ ins['created_at'] }}</span>
+              {% if ins['comment'] %}
+                <br>💬 {{ ins['comment'] }}
+              {% else %}
+                <br><span class="text-muted">（无文字评价）</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endif %}
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- 巡课评价模态框 -->
+{% for s in schedule %}
+  {% set c = s['club'] %}
+  {% set ins = s['inspection'] %}
+  <div class="modal fade" id="modal{{ c['id'] }}" tabindex="-1">
+    <div class="modal-dialog">
+      <div class="modal-content">
+        <form method="post" action="{{ url_for('inspector_submit') }}">
+          <div class="modal-header">
+            <h5 class="modal-title">🔍 巡课评价：{{ c['name'] }}</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+          </div>
+          <div class="modal-body">
+            <input type="hidden" name="inspection_date" value="{{ sel_date }}">
+            <input type="hidden" name="club_id" value="{{ c['id'] }}">
+            <div class="small text-muted mb-2">
+              📍 {{ c['location'] or '（未填地点）' }} &nbsp; 🕐 {{ c['schedule'] or '（未填时间）' }}<br>
+              👩‍🏫 授课教师：{{ c['teacher'] or '—' }} &nbsp; | &nbsp; 学生 {{ c['cnt'] }} 人
+            </div>
+            <div class="mb-3">
+              <label class="form-label">⭐ 评价星级</label>
+              <div class="d-flex gap-2" id="stars{{ c['id'] }}">
+                {% for i in range(1, 6) %}
+                  <label class="star-opt" style="cursor:pointer">
+                    <input type="radio" name="rating" value="{{ i }}"
+                           {% if ins and ins['rating'] == i %}checked{% elif not ins and i == 3 %}checked{% endif %}
+                           style="display:none" onchange="paintStars({{ c['id'] }}, {{ i }})">
+                    <span class="star fs-3" data-star="{{ i }}">★</span>
+                  </label>
+                {% endfor %}
+              </div>
+            </div>
+            <div class="mb-2">
+              <label class="form-label">💬 评价反馈</label>
+              <textarea name="comment" class="form-control" rows="3"
+                        placeholder="记录上课情况、学生表现、存在问题或建议…">{{ ins['comment'] if ins else '' }}</textarea>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">取消</button>
+            <button type="submit" class="btn btn-primary">{{ '更新记录' if ins else '提交评价' }}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+{% endfor %}
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+  function paintStars(clubId, n) {
+    var stars = document.querySelectorAll('#stars' + clubId + ' .star');
+    stars.forEach(function(s){
+      s.style.color = parseInt(s.dataset.star) <= n ? '#f59e0b' : '#ddd';
+    });
+  }
+  // 初始化已选中星级颜色
+  document.querySelectorAll('[id^="stars"]').forEach(function(box){
+    var checked = box.querySelector('input[type=radio]:checked');
+    var n = checked ? parseInt(checked.value) : 3;
+    paintStars(parseInt(box.id.replace('stars','')), n);
+  });
+</script>
+</body>
+</html>
