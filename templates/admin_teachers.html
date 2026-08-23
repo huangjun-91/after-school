@@ -76,6 +76,19 @@
           </form>
         </div>
       </div>
+
+      <!-- CSV 批量导入教师 -->
+      <div class="card shadow-sm mt-3">
+        <div class="card-header bg-white">📂 CSV 批量导入教师</div>
+        <div class="card-body">
+          <form method="post" action="{{ url_for('admin_teachers_import') }}" enctype="multipart/form-data">
+            <label class="form-label small">上传 CSV（列：姓名,账号,密码,擅长学科；支持 UTF-8 / GBK）</label>
+            <input type="file" name="file" class="form-control form-control-sm mb-2" accept=".csv" required>
+            <button class="btn btn-outline-success w-100">导入 CSV</button>
+          </form>
+          <a href="{{ url_for('admin_teachers_template') }}" class="btn btn-sm btn-link p-0 mt-2">⬇ 下载 CSV 模板</a>
+        </div>
+      </div>
     </div>
 
     <!-- 教师列表 -->
