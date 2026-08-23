@@ -37,18 +37,46 @@
   {% endwith %}
 
   <div class="card shadow-sm">
-    <div class="card-header bg-white d-flex justify-content-between">
+    <div class="card-header bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
       <span>报名记录（{{ rows|length }}）</span>
-      <a href="{{ url_for('admin_export') }}" class="btn btn-sm btn-outline-primary">导出CSV</a>
+      <div class="d-flex align-items-center gap-2 flex-wrap">
+        <span class="small text-muted">
+          <span class="badge text-bg-warning">{{ rows|selectattr('status','equalto','pending')|list|length }}</span> 待审核
+        </span>
+        <!-- 一键全审 -->
+        <form method="post" action="{{ url_for('admin_registrations_batch') }}" class="d-inline"
+              onsubmit="return confirm('一键通过全部 {{ rows|selectattr('status','equalto','pending')|list|length }} 条待审核记录？')">
+          <input type="hidden" name="status" value="approved">
+          <button class="btn btn-sm btn-success">✔ 一键通过全部</button>
+        </form>
+        <form method="post" action="{{ url_for('admin_registrations_batch') }}" class="d-inline"
+              onsubmit="return confirm('一键拒绝全部 {{ rows|selectattr('status','equalto','pending')|list|length }} 条待审核记录？')">
+          <input type="hidden" name="status" value="rejected">
+          <button class="btn btn-sm btn-outline-danger">✖ 一键拒绝全部</button>
+        </form>
+        <a href="{{ url_for('admin_export') }}" class="btn btn-sm btn-outline-primary">导出CSV</a>
+      </div>
+    </div>
+    <div class="card-body py-2 border-bottom bg-light">
+      <!-- 批量审核选中的记录 -->
+      <form method="post" action="{{ url_for('admin_registrations_batch') }}" class="d-flex align-items-center gap-2 flex-wrap">
+        <span class="small text-muted">对勾选的记录：</span>
+        <button type="submit" name="status" value="approved" class="btn btn-sm btn-success">✔ 批量通过</button>
+        <button type="submit" name="status" value="rejected" class="btn btn-sm btn-outline-danger">✖ 批量拒绝</button>
+        <button type="submit" name="status" value="pending" class="btn btn-sm btn-outline-secondary">↩ 批量设为待定</button>
+        <span class="form-text ms-2">勾选任意条后点上方按钮；不勾选直接点"一键通过/拒绝全部"则处理所有待审核。</span>
+      </form>
     </div>
     <div class="table-responsive">
-      <table class="table table-sm align-middle mb-0">
+      <table class="table table-sm align-middle mb-0" id="regTable">
         <thead><tr>
+          <th class="text-center"><input type="checkbox" id="checkAll" onclick="toggleAll(this)"></th>
           <th>班级</th><th>学生</th><th>年级</th><th>社团</th><th>类型</th><th>状态</th><th>操作</th>
         </tr></thead>
         <tbody>
           {% for r in rows %}
           <tr>
+            <td class="text-center"><input type="checkbox" class="reg-check" value="{{ r['id'] }}" name="rids" form="batchForm"></td>
             <td>{{ r['class_name'] }}</td>
             <td>{{ r['student_name'] }}</td>
             <td>{{ r['grade'] }}</td>
@@ -78,5 +106,14 @@
     </div>
   </div>
 </div>
+
+<!-- 批量审核表单：收集勾选的记录 id -->
+<form id="batchForm" method="post" action="{{ url_for('admin_registrations_batch') }}" class="d-none"></form>
+
+<script>
+  function toggleAll(master) {
+    document.querySelectorAll('.reg-check').forEach(function(cb){ cb.checked = master.checked; });
+  }
+</script>
 </body>
 </html>
