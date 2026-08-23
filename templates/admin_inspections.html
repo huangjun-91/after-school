@@ -1,0 +1,110 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>巡课记录 - 课后服务报名系统</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+<style>
+  body { background:#f4f6fb; }
+  .nav-admin { background:linear-gradient(135deg,#1e293b,#334155); }
+  .star { color:#f59e0b; }
+</style>
+</head>
+<body>
+<nav class="navbar navbar-expand navbar-dark nav-admin">
+  <div class="container">
+    <span class="navbar-brand">🛠 后台管理</span>
+    <div class="navbar-nav">
+      <a class="nav-link" href="{{ url_for('admin_dashboard') }}">社团管理</a>
+      <a class="nav-link" href="{{ url_for('admin_classes') }}">班级账号</a>
+      <a class="nav-link" href="{{ url_for('admin_students') }}">全校学生</a>
+      <a class="nav-link" href="{{ url_for('admin_teachers') }}">教师账号</a>
+      <a class="nav-link" href="{{ url_for('admin_registrations') }}">报名审核</a>
+      <a class="nav-link" href="{{ url_for('admin_inspections') }}">巡课记录</a>
+      <a class="nav-link" href="{{ url_for('admin_export') }}">导出CSV</a>
+    </div>
+    <div class="navbar-nav ms-auto">
+      <a href="{{ url_for('logout') }}" class="btn btn-outline-light btn-sm">退出</a>
+    </div>
+  </div>
+</nav>
+
+<div class="container py-4">
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% for cat, msg in messages %}
+      <div class="alert alert-{{ cat }}">{{ msg }}</div>
+    {% endfor %}
+  {% endwith %}
+
+  <!-- 筛选 + 导出 -->
+  <div class="card shadow-sm mb-4">
+    <div class="card-body py-3">
+      <form method="get" class="row g-2 align-items-end">
+        <div class="col-md-4">
+          <label class="form-label small">📅 按日期筛选</label>
+          <select name="date" class="form-select">
+            <option value="">全部日期</option>
+            {% for d in dates %}
+              <option value="{{ d }}" {% if date == d %}selected{% endif %}>{{ d }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-2">
+          <button class="btn btn-primary">筛选</button>
+        </div>
+        <div class="col-md-6 text-md-end ms-auto">
+          <span class="small text-muted me-2">共 {{ rows|length }} 条巡课记录</span>
+          <a href="{{ url_for('admin_inspections_export') }}" class="btn btn-sm btn-outline-primary">导出CSV</a>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="card shadow-sm">
+    <div class="card-header bg-white">
+      <span>巡课记录总览</span>
+      <span class="small text-muted ms-2">哪一天 · 哪些人在哪里上课 · 评价反馈</span>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0">
+        <thead><tr>
+          <th>日期</th><th>社团</th><th>类型</th><th>授课教师</th><th>上课地点</th>
+          <th>上课时间</th><th>巡课人</th><th>评分</th><th>评价反馈</th><th>操作</th>
+        </tr></thead>
+        <tbody>
+          {% for r in rows %}
+          <tr>
+            <td><b>{{ r['inspection_date'] }}</b></td>
+            <td>{{ r['club_name'] }}</td>
+            <td><span class="badge {% if r['club_type']=='premium' %}text-bg-warning{% else %}text-bg-secondary{% endif %}">
+              {{ '精品' if r['club_type']=='premium' else '普通' }}</span></td>
+            <td>{{ r['teacher'] or '—' }}</td>
+            <td>{{ r['location'] or '—' }}</td>
+            <td>{{ r['schedule'] or '—' }}</td>
+            <td>{{ r['inspector'] }}</td>
+            <td>
+              <span class="star">
+                {% for i in range(1,6) %}{% if i <= r['rating'] %}★{% else %}☆{% endif %}{% endfor %}
+              </span>
+            </td>
+            <td class="small">{{ r['comment'] or '（无文字评价）' }}</td>
+            <td>
+              <form method="post" action="{{ url_for('admin_inspection_delete', iid=r['id']) }}"
+                    class="d-inline" onsubmit="return confirm('删除该巡课记录？')">
+                <button class="btn btn-sm btn-outline-danger">删除</button>
+              </form>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="10" class="text-muted text-center py-4">
+            暂无巡课记录，请先在「教师账号」页创建巡课人员账号，由巡课人员登录后提交巡课评价。
+          </td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+</body>
+</html>
