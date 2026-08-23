@@ -11,6 +11,31 @@
   .badge-premium { background:linear-gradient(135deg,#f7971e,#ffd200); color:#333; }
   .badge-ordinary { background:#e2e8f0; color:#333; }
   .star { color:#f59e0b; }
+  /* 手机端才显示字段标签（桌面表格已有表头） */
+  .m-cell-label { display:none; }
+
+  /* ===== 移动端优化（<=768px 手机）===== */
+  @media (max-width: 768px) {
+    /* 隐藏表头，把每行 <tr> 重排成独立卡片 */
+    .schedule-table thead { display:none; }
+    .schedule-table, .schedule-table tbody, .schedule-table tr, .schedule-table td {
+      display:block; width:100%;
+    }
+    .schedule-table tbody tr {
+      background:#fff; border:1px solid #e5e7eb; border-radius:12px;
+      margin-bottom:12px; padding:12px 14px; box-shadow:0 1px 3px rgba(0,0,0,.06);
+    }
+    .schedule-table tbody tr.table-light {
+      background:#f9fafb; border-radius:0 0 12px 12px; margin-top:-12px;
+      border-top:none; padding-top:8px; box-shadow:none;
+    }
+    .schedule-table td { border:none; padding:3px 0; }
+    .schedule-table td:first-child { font-size:1.05rem; font-weight:600; }
+    .m-cell-label { color:#6b7280; font-size:.8rem; display:inline-block; min-width:72px; }
+    .schedule-table td:last-child .btn { width:100%; min-height:44px; font-size:.95rem; }
+    .container { padding-left:10px; padding-right:10px; }
+    .navbar-brand { font-size:1.05rem; }
+  }
 </style>
 </head>
 <body>
@@ -62,7 +87,7 @@
       <span class="small text-muted ms-2">哪一天 · 哪些人 · 在哪里上课</span>
     </div>
     <div class="table-responsive">
-      <table class="table table-sm align-middle mb-0">
+      <table class="table table-sm align-middle mb-0 schedule-table">
         <thead><tr>
           <th>社团</th><th>类型</th><th>授课教师</th><th>上课地点</th><th>上课时间</th>
           <th>学生数</th><th>巡课状态</th><th>评价</th>
@@ -72,17 +97,18 @@
             {% set c = s['club'] %}
             {% set ins = s['inspection'] %}
           <tr>
-            <td>
+            <td class="m-cell-name">
               {{ c['name'] }}
-              {% if c['description'] %}<div class="small text-muted">{{ c['description'] }}</div>{% endif %}
+              {% if c['description'] %}<div class="small text-muted fw-normal">{{ c['description'] }}</div>{% endif %}
             </td>
-            <td><span class="badge {% if c['type']=='premium' %}badge-premium{% else %}badge-ordinary{% endif %}">
+            <td><span class="m-cell-label">类型</span><span class="badge {% if c['type']=='premium' %}badge-premium{% else %}badge-ordinary{% endif %}">
               {{ '精品(全校)' if c['type']=='premium' else '普通·'+(c['grade'] or '') }}</span></td>
-            <td>{{ c['teacher'] or '—' }}</td>
-            <td>{{ c['location'] or '—' }}</td>
-            <td>{{ c['schedule'] or '—' }}</td>
-            <td>{{ c['cnt'] }}</td>
+            <td><span class="m-cell-label">任课教师</span>{{ c['teacher'] or '—' }}</td>
+            <td><span class="m-cell-label">上课地点</span>{{ c['location'] or '—' }}</td>
+            <td><span class="m-cell-label">上课时间</span>{{ c['schedule'] or '—' }}</td>
+            <td><span class="m-cell-label">学生数</span>{{ c['cnt'] }}</td>
             <td>
+              <span class="m-cell-label">状态</span>
               {% if ins %}
                 <span class="badge text-bg-success">已巡课</span>
               {% else %}
