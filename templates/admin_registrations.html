@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -17,7 +17,10 @@
     <div class="navbar-nav">
       <a class="nav-link" href="{{ url_for('admin_dashboard') }}">社团管理</a>
       <a class="nav-link" href="{{ url_for('admin_classes') }}">班级账号</a>
+      <a class="nav-link" href="{{ url_for('admin_students') }}">全校学生</a>
+      <a class="nav-link" href="{{ url_for('admin_teachers') }}">教师账号</a>
       <a class="nav-link" href="{{ url_for('admin_registrations') }}">报名审核</a>
+      <a class="nav-link" href="{{ url_for('admin_inspections') }}">巡课记录</a>
       <a class="nav-link" href="{{ url_for('admin_export') }}">导出CSV</a>
     </div>
     <div class="navbar-nav ms-auto">
