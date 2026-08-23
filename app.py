@@ -11,6 +11,7 @@ import os
 import sqlite3
 import csv
 import io
+import traceback
 from datetime import datetime
 from flask import (Flask, request, redirect, url_for, render_template,
                    session, flash, jsonify, make_response, g)
@@ -1433,6 +1434,38 @@ def _pinyin_short(cls_name):
 
 
 init_db()
+
+
+# ---------- 全局错误日志（定位线上 500） ----------
+@app.errorhandler(Exception)
+def handle_exception(e):
+    """记录任何未捕获异常到持久卷，便于定位线上问题（生产不显示 traceback）"""
+    try:
+        tb = traceback.format_exc()
+        log_path = os.path.join(DATA_DIR, 'error.log')
+        with open(log_path, 'a', encoding='utf-8') as f:
+            f.write(f"\n===== {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} =====\n{tb}\n")
+    except Exception:
+        pass
+    # 记录后返回标准 500 页面
+    return 'Internal Server Error', 500
+
+
+# 调试端点：管理员可查看最近错误日志（排查用）
+@app.route('/admin/debug-log')
+def admin_debug_log():
+    if not session.get('role') == 'admin':
+        return redirect(url_for('login'))
+    log_path = os.path.join(DATA_DIR, 'error.log')
+    try:
+        with open(log_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+    except FileNotFoundError:
+        content = '（暂无错误日志）'
+    except Exception as ex:
+        content = f'读取日志失败: {ex}'
+    return '<pre style="font-size:12px;white-space:pre-wrap">' + content.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;') + '</pre>'
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=True)
