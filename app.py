@@ -98,6 +98,51 @@ def init_db():
         FOREIGN KEY (club_id) REFERENCES clubs(id),
         FOREIGN KEY (class_id) REFERENCES class_accounts(id)
     );
+
+    -- 教师账号（功能一：教师登录并选课）
+    CREATE TABLE IF NOT EXISTS teachers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        username TEXT UNIQUE NOT NULL,
+        password TEXT NOT NULL,
+        subjects TEXT DEFAULT '',        -- 擅长的学科，逗号分隔，如 "语文,书法"
+        created_at TEXT DEFAULT (datetime('now','localtime'))
+    );
+
+    -- 教师任教社团关联（一名教师可任教多个社团）
+    CREATE TABLE IF NOT EXISTS teacher_clubs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        teacher_id INTEGER NOT NULL,
+        club_id INTEGER NOT NULL,
+        created_at TEXT DEFAULT (datetime('now','localtime')),
+        UNIQUE(teacher_id, club_id),
+        FOREIGN KEY (teacher_id) REFERENCES teachers(id),
+        FOREIGN KEY (club_id) REFERENCES clubs(id)
+    );
+
+    -- 巡课人员账号（功能二：巡课记录）
+    CREATE TABLE IF NOT EXISTS inspectors (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        username TEXT UNIQUE NOT NULL,
+        password TEXT NOT NULL,
+        created_at TEXT DEFAULT (datetime('now','localtime'))
+    );
+
+    -- 巡课记录（哪一天哪些人在哪里上课 + 评价反馈）
+    CREATE TABLE IF NOT EXISTS inspections (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        inspection_date TEXT NOT NULL,   -- 巡课日期 YYYY-MM-DD
+        club_id INTEGER NOT NULL,
+        inspector TEXT NOT NULL,         -- 巡课人姓名
+        location TEXT DEFAULT '',        -- 实际巡课地点（上课地点快照）
+        teacher TEXT DEFAULT '',         -- 授课教师快照
+        schedule TEXT DEFAULT '',        -- 上课时间快照
+        rating INTEGER DEFAULT 3,        -- 评价星级 1-5
+        comment TEXT DEFAULT '',         -- 评价反馈
+        created_at TEXT DEFAULT (datetime('now','localtime')),
+        FOREIGN KEY (club_id) REFERENCES clubs(id)
+    );
     ''')
     # 迁移：为已存在的 clubs 表补充新增字段（幂等）
     try:
@@ -177,6 +222,24 @@ def login():
             session['class_name'] = c['class_name']
             session['grade'] = c['grade']
             return redirect(url_for('teacher_dashboard'))
+
+        # 教师账号（授课教师选课）
+        t = db.execute("SELECT * FROM teachers WHERE username=?", (username,)).fetchone()
+        if t and t['password'] == password:
+            session['role'] = 'staff'
+            session['username'] = t['username']
+            session['teacher_id'] = t['id']
+            session['teacher_name'] = t['name']
+            return redirect(url_for('teacher_home'))
+
+        # 巡课人员账号
+        ins = db.execute("SELECT * FROM inspectors WHERE username=?", (username,)).fetchone()
+        if ins and ins['password'] == password:
+            session['role'] = 'inspector'
+            session['username'] = ins['username']
+            session['inspector_name'] = ins['name']
+            session['inspector_id'] = ins['id']
+            return redirect(url_for('inspector_dashboard'))
 
         flash('账号或密码错误', 'danger')
     return render_template('login.html')
@@ -295,6 +358,225 @@ def teacher_remove(rid):
     db.commit()
     flash('已撤销该报名', 'success')
     return redirect(url_for('teacher_dashboard'))
+
+
+# ================= 功能一：教师登录并选课 =================
+@app.route('/teacher_home')
+def teacher_home():
+    """教师主页：查看可选课程（按擅长学科筛选）、已任教课程、学生名单"""
+    if not session.get('role') == 'staff':
+        return redirect(url_for('login'))
+    db = get_db()
+    teacher_id = session['teacher_id']
+    teacher = db.execute("SELECT * FROM teachers WHERE id=?", (teacher_id,)).fetchone()
+    if not teacher:
+        flash('教师账号不存在', 'danger')
+        return redirect(url_for('logout'))
+
+    # 擅长学科关键词
+    subjects = [s.strip() for s in (teacher['subjects'] or '').split(',') if s.strip()]
+
+    # 已任教的社团（含关联）
+    my_clubs = db.execute('''
+        SELECT c.*,
+          (SELECT COUNT(*) FROM registrations r
+           WHERE r.club_id=c.id AND r.status IN ('pending','approved')) AS cnt
+        FROM teacher_clubs tc JOIN clubs c ON tc.club_id = c.id
+        WHERE tc.teacher_id=? ORDER BY c.id
+    ''', (teacher_id,)).fetchall()
+
+    # 每个任教社团的学生名单（已通过/待审核的报名）
+    my_club_students = {}
+    for c in my_clubs:
+        rows = db.execute('''
+            SELECT r.student_name, r.grade, r.status, a.class_name
+            FROM registrations r
+            JOIN class_accounts a ON r.class_id = a.id
+            WHERE r.club_id=? AND r.status IN ('pending','approved')
+            ORDER BY r.grade, a.class_name, r.student_name
+        ''', (c['id'],)).fetchall()
+        my_club_students[c['id']] = rows
+
+    # 可选的社团：未任教 + 启用；若设置了擅长学科，优先展示匹配的
+    available = db.execute('''
+        SELECT c.*,
+          (SELECT COUNT(*) FROM registrations r
+           WHERE r.club_id=c.id AND r.status IN ('pending','approved')) AS cnt
+        FROM clubs c WHERE c.is_active=1
+          AND c.id NOT IN (SELECT club_id FROM teacher_clubs WHERE teacher_id=?)
+        ORDER BY c.type DESC, c.id
+    ''', (teacher_id,)).fetchall()
+
+    # 判断每个社团是否与擅长学科匹配（用于标注推荐）
+    def matches(c):
+        if not subjects:
+            return False
+        hay = (c['name'] or '') + (c['description'] or '')
+        for s in subjects:
+            if s and s in hay:
+                return True
+        # 授课教师名匹配（教师可接自己挂名的社团）
+        if c['teacher'] and c['teacher'] == teacher['name']:
+            return True
+        return False
+
+    recommended_ids = [c['id'] for c in available if matches(c)]
+
+    # 所有教师（用于后台管理展示，教师端不需要）
+    return render_template('teacher_home.html', teacher=teacher, subjects=subjects,
+                           my_clubs=my_clubs, my_club_students=my_club_students,
+                           available=available, recommended_ids=recommended_ids)
+
+
+@app.route('/teacher/club/select/<int:cid>', methods=['POST'])
+def teacher_club_select(cid):
+    """教师选择任教某社团"""
+    if not session.get('role') == 'staff':
+        return redirect(url_for('login'))
+    db = get_db()
+    teacher_id = session['teacher_id']
+    club = db.execute("SELECT * FROM clubs WHERE id=?", (cid,)).fetchone()
+    if not club:
+        flash('社团不存在', 'danger')
+        return redirect(url_for('teacher_home'))
+    # 已任教则跳过
+    dup = db.execute("SELECT 1 FROM teacher_clubs WHERE teacher_id=? AND club_id=?",
+                     (teacher_id, cid)).fetchone()
+    if dup:
+        flash('你已任教该社团', 'warning')
+        return redirect(url_for('teacher_home'))
+    try:
+        db.execute("INSERT INTO teacher_clubs (teacher_id, club_id) VALUES (?,?)",
+                   (teacher_id, cid))
+        # 同步更新社团的授课教师字段（展示用）
+        db.execute("UPDATE clubs SET teacher=? WHERE id=?",
+                   (session.get('teacher_name', ''), cid))
+        db.commit()
+        flash(f'你已选择任教「{club["name"]}」', 'success')
+    except sqlite3.IntegrityError:
+        flash('你已任教该社团', 'warning')
+    return redirect(url_for('teacher_home'))
+
+
+@app.route('/teacher/club/leave/<int:cid>', methods=['POST'])
+def teacher_club_leave(cid):
+    """教师退出任教某社团"""
+    if not session.get('role') == 'staff':
+        return redirect(url_for('login'))
+    db = get_db()
+    teacher_id = session['teacher_id']
+    club = db.execute("SELECT * FROM clubs WHERE id=?", (cid,)).fetchone()
+    db.execute("DELETE FROM teacher_clubs WHERE teacher_id=? AND club_id=?",
+               (teacher_id, cid))
+    # 若该社团的展示教师正是本人，则清空展示字段（避免误导）
+    if club and club['teacher'] == session.get('teacher_name'):
+        db.execute("UPDATE clubs SET teacher='' WHERE id=?", (cid,))
+    db.commit()
+    flash(f'你已退出「{club["name"] if club else ""}」', 'success')
+    return redirect(url_for('teacher_home'))
+
+
+# ================= 功能二：巡课记录 =================
+@app.route('/inspector')
+def inspector_dashboard():
+    """巡课人员主页：按日期查看当天哪些人在哪里上课，并可评价反馈"""
+    if not session.get('role') == 'inspector':
+        return redirect(url_for('login'))
+    db = get_db()
+    inspector_name = session.get('inspector_name', '巡课人员')
+
+    # 巡课日期过滤（默认今天）
+    today = datetime.now().strftime('%Y-%m-%d')
+    sel_date = request.args.get('date', today)
+    try:
+        datetime.strptime(sel_date, '%Y-%m-%d')
+    except ValueError:
+        sel_date = today
+
+    # 当日排课：有上课地点/时间的启用社团；未排课地点时间的也列出（可巡课）
+    day_clubs = db.execute('''
+        SELECT c.*,
+          (SELECT COUNT(*) FROM registrations r
+           WHERE r.club_id=c.id AND r.status IN ('pending','approved')) AS cnt
+        FROM clubs c WHERE c.is_active=1
+        ORDER BY c.type DESC, c.id
+    ''').fetchall()
+
+    # 已存在的巡课记录（该日）
+    existing = {}
+    for r in db.execute("SELECT * FROM inspections WHERE inspection_date=?", (sel_date,)).fetchall():
+        existing[r['club_id']] = r
+
+    # 汇总当天打卡：社团 -> (人数, 教师, 地点, 时间, 该日巡课记录)
+    schedule = []
+    for c in day_clubs:
+        schedule.append({
+            'club': c,
+            'count': c['cnt'],
+            'inspection': existing.get(c['id']),
+        })
+
+    total_clubs = len(schedule)
+    inspected = sum(1 for s in schedule if s['inspection'])
+    return render_template('inspector.html', schedule=schedule, sel_date=sel_date,
+                           today=today, inspector_name=inspector_name,
+                           total_clubs=total_clubs, inspected=inspected)
+
+
+@app.route('/inspector/submit', methods=['POST'])
+def inspector_submit():
+    """提交巡课评价反馈"""
+    if not session.get('role') == 'inspector':
+        return redirect(url_for('login'))
+    db = get_db()
+    inspection_date = request.form.get('inspection_date', '').strip()
+    club_id = request.form.get('club_id')
+    rating = request.form.get('rating', '3')
+    comment = request.form.get('comment', '').strip()
+    inspector_name = session.get('inspector_name', '巡课人员')
+
+    try:
+        datetime.strptime(inspection_date, '%Y-%m-%d')
+    except ValueError:
+        flash('日期格式错误', 'danger')
+        return redirect(url_for('inspector_dashboard'))
+
+    club = db.execute("SELECT * FROM clubs WHERE id=?", (club_id,)).fetchone()
+    if not club:
+        flash('社团不存在', 'danger')
+        return redirect(url_for('inspector_dashboard'))
+
+    try:
+        rating = int(rating)
+        if not (1 <= rating <= 5):
+            raise ValueError
+    except ValueError:
+        flash('评分需在 1-5 星之间', 'danger')
+        return redirect(url_for('inspector_dashboard'))
+
+    # 同一日同一社团重复巡课 -> 更新覆盖
+    existing = db.execute(
+        "SELECT id FROM inspections WHERE inspection_date=? AND club_id=?",
+        (inspection_date, club_id)).fetchone()
+    if existing:
+        db.execute('''
+            UPDATE inspections SET inspector=?, rating=?, comment=?, location=?, teacher=?, schedule=?
+            WHERE id=?
+        ''', (inspector_name, rating, comment,
+              club['location'] or '', club['teacher'] or '', club['schedule'] or '',
+              existing['id']))
+        flash('巡课记录已更新', 'success')
+    else:
+        db.execute('''
+            INSERT INTO inspections
+            (inspection_date, club_id, inspector, location, teacher, schedule, rating, comment)
+            VALUES (?,?,?,?,?,?,?,?)
+        ''', (inspection_date, club_id, inspector_name,
+              club['location'] or '', club['teacher'] or '', club['schedule'] or '',
+              rating, comment))
+        flash('巡课评价已提交', 'success')
+    db.commit()
+    return redirect(url_for('inspector_dashboard', date=inspection_date))
 
 
 # ---------- 后台（管理员） ----------
@@ -882,6 +1164,219 @@ def admin_lowcount(cid, action):
         db.commit()
         flash('该社团已关闭（学生需重新选择）', 'success')
     return redirect(url_for('admin_dashboard'))
+
+
+# ---------- 管理员：教师账号管理 ----------
+# 教师账号管理页（含创建、列表、删除）
+@app.route('/admin/teachers')
+def admin_teachers():
+    if not session.get('role') == 'admin':
+        return redirect(url_for('login'))
+    db = get_db()
+    teachers = db.execute('''
+        SELECT t.*,
+          (SELECT COUNT(*) FROM teacher_clubs tc WHERE tc.teacher_id=t.id) AS club_count
+        FROM teachers t ORDER BY t.id
+    ''').fetchall()
+    # 每个教师任教的社团名
+    teacher_clubs_map = {}
+    for t in teachers:
+        clubs = db.execute('''
+            SELECT c.name, c.type FROM teacher_clubs tc JOIN clubs c ON tc.club_id=c.id
+            WHERE tc.teacher_id=? ORDER BY c.id
+        ''', (t['id'],)).fetchall()
+        teacher_clubs_map[t['id']] = clubs
+    return render_template('admin_teachers.html', teachers=teachers,
+                           teacher_clubs_map=teacher_clubs_map)
+
+
+# 创建教师账号
+@app.route('/admin/teacher/create', methods=['POST'])
+def admin_teacher_create():
+    if not session.get('role') == 'admin':
+        return redirect(url_for('login'))
+    name = request.form.get('name', '').strip()
+    username = request.form.get('username', '').strip()
+    password = request.form.get('password', '').strip() or '123456'
+    subjects = request.form.get('subjects', '').strip()
+    db = get_db()
+    if not name or not username:
+        flash('请填写教师姓名和账号', 'danger')
+        return redirect(url_for('admin_teachers'))
+    try:
+        db.execute('''
+            INSERT INTO teachers (name, username, password, subjects)
+            VALUES (?,?,?,?)
+        ''', (name, username, password, subjects))
+        db.commit()
+        flash(f'教师账号「{name}」创建成功（账号 {username}）', 'success')
+    except sqlite3.IntegrityError:
+        flash(f'账号 {username} 已存在', 'danger')
+    return redirect(url_for('admin_teachers'))
+
+
+# 批量创建教师账号（文本框，每行"姓名,账号[,密码][,擅长学科]"）
+@app.route('/admin/teachers/batch', methods=['POST'])
+def admin_teachers_batch():
+    if not session.get('role') == 'admin':
+        return redirect(url_for('login'))
+    lines = request.form.get('teachers', '').strip().splitlines()
+    db = get_db()
+    created = 0
+    errors = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        parts = [p.strip() for p in line.split(',')]
+        name = parts[0]
+        username = parts[1] if len(parts) > 1 else ''
+        password = parts[2] if len(parts) > 2 else '123456'
+        subjects = parts[3] if len(parts) > 3 else ''
+        if not name or not username:
+            errors.append(f'{line}: 需至少"姓名,账号"')
+            continue
+        try:
+            db.execute('INSERT INTO teachers (name, username, password, subjects) VALUES (?,?,?,?)',
+                       (name, username, password, subjects))
+            created += 1
+        except sqlite3.IntegrityError:
+            errors.append(f'{username}: 账号已存在')
+    db.commit()
+    if created:
+        flash(f'成功创建 {created} 个教师账号（默认密码 123456）', 'success')
+    for e in errors:
+        flash(e, 'warning')
+    return redirect(url_for('admin_teachers'))
+
+
+# 删除教师账号
+@app.route('/admin/teacher/delete/<int:tid>', methods=['POST'])
+def admin_teacher_delete(tid):
+    if not session.get('role') == 'admin':
+        return redirect(url_for('login'))
+    db = get_db()
+    # 解除其任教关联
+    db.execute("DELETE FROM teacher_clubs WHERE teacher_id=?", (tid,))
+    db.execute("DELETE FROM teachers WHERE id=?", (tid,))
+    db.commit()
+    flash('教师账号已删除', 'success')
+    return redirect(url_for('admin_teachers'))
+
+
+# ---------- 管理员：巡课人员账号管理 ----------
+# 巡课人员账号管理页（创建/列表/删除）
+@app.route('/admin/inspectors')
+def admin_inspectors():
+    if not session.get('role') == 'admin':
+        return redirect(url_for('login'))
+    db = get_db()
+    inspectors = db.execute("SELECT * FROM inspectors ORDER BY id").fetchall()
+    return render_template('admin_inspectors.html', inspectors=inspectors)
+
+
+# 创建巡课人员账号
+@app.route('/admin/inspector/create', methods=['POST'])
+def admin_inspector_create():
+    if not session.get('role') == 'admin':
+        return redirect(url_for('login'))
+    name = request.form.get('name', '').strip()
+    username = request.form.get('username', '').strip()
+    password = request.form.get('password', '').strip() or '123456'
+    db = get_db()
+    if not name or not username:
+        flash('请填写巡课人姓名和账号', 'danger')
+        return redirect(url_for('admin_inspectors'))
+    try:
+        db.execute('INSERT INTO inspectors (name, username, password) VALUES (?,?,?)',
+                   (name, username, password))
+        db.commit()
+        flash(f'巡课账号「{name}」创建成功（账号 {username}）', 'success')
+    except sqlite3.IntegrityError:
+        flash(f'账号 {username} 已存在', 'danger')
+    return redirect(url_for('admin_inspectors'))
+
+
+# 删除巡课人员账号
+@app.route('/admin/inspector/delete/<int:iid>', methods=['POST'])
+def admin_inspector_delete(iid):
+    if not session.get('role') == 'admin':
+        return redirect(url_for('login'))
+    db = get_db()
+    db.execute("DELETE FROM inspectors WHERE id=?", (iid,))
+    db.commit()
+    flash('巡课账号已删除', 'success')
+    return redirect(url_for('admin_inspectors'))
+
+
+# ---------- 管理员：巡课记录查看 ----------
+# 巡课记录总览（按日期筛选，查看哪一天哪些人在哪里上课 + 评价反馈）
+@app.route('/admin/inspections')
+def admin_inspections():
+    if not session.get('role') == 'admin':
+        return redirect(url_for('login'))
+    db = get_db()
+    # 日期筛选（默认全部）
+    date = request.args.get('date', '')
+    if date:
+        try:
+            datetime.strptime(date, '%Y-%m-%d')
+        except ValueError:
+            date = ''
+    if date:
+        rows = db.execute('''
+            SELECT i.*, c.name AS club_name, c.type AS club_type, c.grade AS club_grade
+            FROM inspections i JOIN clubs c ON i.club_id=c.id
+            WHERE i.inspection_date=? ORDER BY i.inspection_date DESC, i.id DESC
+        ''', (date,)).fetchall()
+    else:
+        rows = db.execute('''
+            SELECT i.*, c.name AS club_name, c.type AS club_type, c.grade AS club_grade
+            FROM inspections i JOIN clubs c ON i.club_id=c.id
+            ORDER BY i.inspection_date DESC, i.id DESC
+        ''').fetchall()
+    # 所有巡课日期（用于下拉筛选）
+    dates = [r[0] for r in db.execute(
+        "SELECT DISTINCT inspection_date FROM inspections ORDER BY inspection_date DESC").fetchall()]
+    return render_template('admin_inspections.html', rows=rows, date=date, dates=dates)
+
+
+# 导出巡课记录 CSV
+@app.route('/admin/inspections/export')
+def admin_inspections_export():
+    if not session.get('role') == 'admin':
+        return redirect(url_for('login'))
+    db = get_db()
+    rows = db.execute('''
+        SELECT i.*, c.name AS club_name, c.type AS club_type, c.grade AS club_grade
+        FROM inspections i JOIN clubs c ON i.club_id=c.id
+        ORDER BY i.inspection_date DESC, i.id DESC
+    ''').fetchall()
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(['巡课日期', '社团名称', '社团类型', '授课教师', '上课地点', '上课时间', '巡课人', '评分(1-5)', '评价反馈'])
+    for r in rows:
+        writer.writerow([r['inspection_date'], r['club_name'],
+                         '精品' if r['club_type'] == 'premium' else '普通',
+                         r['teacher'] or '', r['location'] or '', r['schedule'] or '',
+                         r['inspector'], r['rating'], r['comment']])
+    data = buf.getvalue().encode('utf-8-sig')
+    resp = make_response(data)
+    resp.headers['Content-Type'] = 'text/csv; charset=utf-8'
+    resp.headers['Content-Disposition'] = 'attachment; filename="inspections.csv"'
+    return resp
+
+
+# 删除单条巡课记录
+@app.route('/admin/inspection/delete/<int:iid>', methods=['POST'])
+def admin_inspection_delete(iid):
+    if not session.get('role') == 'admin':
+        return redirect(url_for('login'))
+    db = get_db()
+    db.execute("DELETE FROM inspections WHERE id=?", (iid,))
+    db.commit()
+    flash('巡课记录已删除', 'success')
+    return redirect(url_for('admin_inspections'))
 
 
 # 导出 CSV
