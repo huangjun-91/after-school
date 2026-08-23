@@ -64,6 +64,7 @@
         <div class="card-header bg-white">
           <span>📚 可选课程（选择你擅长的社团任教）</span>
           {% if subjects %}<span class="badge text-bg-warning ms-2">🌟 匹配擅长学科</span>{% endif %}
+          <span class="badge text-bg-secondary ms-2">已任教 {{ my_club_count }}/2 门</span>
         </div>
         <div class="card-body">
           {% if available %}
@@ -85,7 +86,11 @@
                   </div>
                 </div>
                 <form method="post" action="{{ url_for('teacher_club_select', cid=c['id']) }}" class="text-nowrap">
-                  <button class="btn btn-sm btn-success">选择任教</button>
+                  {% if my_club_count < 2 %}
+                    <button class="btn btn-sm btn-success">选择任教</button>
+                  {% else %}
+                    <button class="btn btn-sm btn-success" disabled title="最多任教 2 门">已满 2 门</button>
+                  {% endif %}
                 </form>
               </div>
             {% endfor %}
@@ -94,6 +99,59 @@
           {% endif %}
         </div>
       </div>
+
+      <!-- 教师手动新增课程（全局） -->
+      {% if my_club_count < 2 %}
+      <div class="card shadow-sm mt-4">
+        <div class="card-header bg-white">➕ 新增课程（备选里没有你擅长的方向？自己创建一门）</div>
+        <div class="card-body">
+          <form method="post" action="{{ url_for('teacher_club_create') }}" class="row g-2">
+            <div class="col-md-4">
+              <label class="form-label small">课程名称</label>
+              <input type="text" name="name" class="form-control form-control-sm" placeholder="如：趣味书法" required>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label small">类型</label>
+              <select name="type" class="form-select form-select-sm">
+                <option value="ordinary" selected>普通（按年级）</option>
+                <option value="premium">精品（全校）</option>
+              </select>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label small">所属年级（普通课程）</label>
+              <select name="grade" class="form-select form-select-sm">
+                <option value="">—</option>
+                {% for g in GRADES %}<option value="{{ g }}">{{ g }}</option>{% endfor %}
+              </select>
+            </div>
+            <div class="col-md-2">
+              <label class="form-label small">人数上限</label>
+              <input type="number" name="max_students" class="form-control form-control-sm" value="30" min="15" max="30">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small">上课地点</label>
+              <input type="text" name="location" class="form-control form-control-sm" placeholder="如：美术教室3">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label small">上课时间</label>
+              <input type="text" name="schedule" class="form-control form-control-sm" placeholder="如：周二 16:30-17:30">
+            </div>
+            <div class="col-12">
+              <label class="form-label small">课程简介</label>
+              <input type="text" name="description" class="form-control form-control-sm" placeholder="可选，用于匹配擅长学科">
+            </div>
+            <div class="col-12">
+              <button class="btn btn-success w-100">创建并任教该课程</button>
+              <div class="form-text">新建课程会加入全校社团列表，学生也能报名。</div>
+            </div>
+          </form>
+        </div>
+      </div>
+      {% else %}
+      <div class="alert alert-warning mt-4 mb-0 py-2 small">
+        ⚠️ 你已任教 2 门课程（达到上限）。如需新增，请先在"我任教的课程"里退出其中一门。
+      </div>
+      {% endif %}
     </div>
 
     <!-- 右：已任教课程 -->
