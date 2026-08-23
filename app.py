@@ -426,12 +426,13 @@ def teacher_home():
     # 所有教师（用于后台管理展示，教师端不需要）
     return render_template('teacher_home.html', teacher=teacher, subjects=subjects,
                            my_clubs=my_clubs, my_club_students=my_club_students,
-                           available=available, recommended_ids=recommended_ids)
+                           available=available, recommended_ids=recommended_ids,
+                           GRADES=GRADES, my_club_count=len(my_clubs))
 
 
 @app.route('/teacher/club/select/<int:cid>', methods=['POST'])
 def teacher_club_select(cid):
-    """教师选择任教某社团"""
+    """教师选择任教某社团（最多任教 2 门）"""
     if not session.get('role') == 'staff':
         return redirect(url_for('login'))
     db = get_db()
@@ -446,6 +447,12 @@ def teacher_club_select(cid):
     if dup:
         flash('你已任教该社团', 'warning')
         return redirect(url_for('teacher_home'))
+    # 最多任教 2 门
+    cnt = db.execute("SELECT COUNT(*) FROM teacher_clubs WHERE teacher_id=?",
+                     (teacher_id,)).fetchone()[0]
+    if cnt >= 2:
+        flash('每位教师最多只能任教 2 门课程。如需调整，请先在右侧退出已任教的课程。', 'warning')
+        return redirect(url_for('teacher_home'))
     try:
         db.execute("INSERT INTO teacher_clubs (teacher_id, club_id) VALUES (?,?)",
                    (teacher_id, cid))
@@ -456,6 +463,61 @@ def teacher_club_select(cid):
         flash(f'你已选择任教「{club["name"]}」', 'success')
     except sqlite3.IntegrityError:
         flash('你已任教该社团', 'warning')
+    return redirect(url_for('teacher_home'))
+
+
+@app.route('/teacher/club/create', methods=['POST'])
+def teacher_club_create():
+    """教师手动新增课程（全局可见，学生也能报名）"""
+    if not session.get('role') == 'staff':
+        return redirect(url_for('login'))
+    db = get_db()
+    teacher_id = session['teacher_id']
+    teacher = db.execute("SELECT * FROM teachers WHERE id=?", (teacher_id,)).fetchone()
+    if not teacher:
+        flash('教师账号不存在', 'danger')
+        return redirect(url_for('teacher_home'))
+    # 最多任教 2 门
+    cnt = db.execute("SELECT COUNT(*) FROM teacher_clubs WHERE teacher_id=?",
+                     (teacher_id,)).fetchone()[0]
+    if cnt >= 2:
+        flash('每位教师最多只能任教 2 门课程。如需新增，请先退出已任教的课程。', 'warning')
+        return redirect(url_for('teacher_home'))
+
+    name = request.form.get('name', '').strip()
+    ctype_raw = request.form.get('type', 'ordinary')
+    grade = request.form.get('grade', '').strip() or None
+    description = request.form.get('description', '').strip()
+    location = request.form.get('location', '').strip()
+    schedule = request.form.get('schedule', '').strip()
+    max_students = request.form.get('max_students', MAX_STUDENTS_DEFAULT)
+
+    if not name:
+        flash('请填写课程名称', 'danger')
+        return redirect(url_for('teacher_home'))
+    ctype = 'premium' if ctype_raw == 'premium' else 'ordinary'
+    if ctype == 'ordinary' and (grade not in GRADES):
+        flash('普通课程必须选择所属年级', 'danger')
+        return redirect(url_for('teacher_home'))
+    if ctype == 'premium':
+        grade = None
+    try:
+        max_students = int(max_students)
+        if not (15 <= max_students <= 30):
+            raise ValueError
+    except ValueError:
+        max_students = MAX_STUDENTS_DEFAULT
+
+    cur = db.execute('''
+        INSERT INTO clubs (name, type, grade, description, teacher, location, schedule, max_students)
+        VALUES (?,?,?,?,?,?,?,?)
+    ''', (name, ctype, grade, description, teacher['name'], location, schedule, max_students))
+    club_id = cur.lastrowid
+    # 教师自动任教新建的课程
+    db.execute("INSERT INTO teacher_clubs (teacher_id, club_id) VALUES (?,?)",
+               (teacher_id, club_id))
+    db.commit()
+    flash(f'课程「{name}」已创建并归你任教（可被学生报名）', 'success')
     return redirect(url_for('teacher_home'))
 
 
@@ -526,7 +588,7 @@ def inspector_dashboard():
 
 @app.route('/inspector/submit', methods=['POST'])
 def inspector_submit():
-    """提交巡课评价反馈"""
+    """提交巡课评价反馈（可同时修改该社团的任课教师）"""
     if not session.get('role') == 'inspector':
         return redirect(url_for('login'))
     db = get_db()
@@ -534,6 +596,7 @@ def inspector_submit():
     club_id = request.form.get('club_id')
     rating = request.form.get('rating', '3')
     comment = request.form.get('comment', '').strip()
+    new_teacher = request.form.get('teacher', '').strip()   # 可修改任课教师
     inspector_name = session.get('inspector_name', '巡课人员')
 
     try:
@@ -555,6 +618,13 @@ def inspector_submit():
         flash('评分需在 1-5 星之间', 'danger')
         return redirect(url_for('inspector_dashboard'))
 
+    # 若巡课人填写了任课教师且与当前不同，则同步更新社团的授课教师字段
+    teacher_saved = club['teacher'] or ''
+    if new_teacher and new_teacher != (club['teacher'] or ''):
+        db.execute("UPDATE clubs SET teacher=? WHERE id=?", (new_teacher, club_id))
+        teacher_saved = new_teacher
+        flash('已同步更新任课教师', 'success')
+
     # 同一日同一社团重复巡课 -> 更新覆盖
     existing = db.execute(
         "SELECT id FROM inspections WHERE inspection_date=? AND club_id=?",
@@ -564,7 +634,7 @@ def inspector_submit():
             UPDATE inspections SET inspector=?, rating=?, comment=?, location=?, teacher=?, schedule=?
             WHERE id=?
         ''', (inspector_name, rating, comment,
-              club['location'] or '', club['teacher'] or '', club['schedule'] or '',
+              club['location'] or '', teacher_saved, club['schedule'] or '',
               existing['id']))
         flash('巡课记录已更新', 'success')
     else:
@@ -573,7 +643,7 @@ def inspector_submit():
             (inspection_date, club_id, inspector, location, teacher, schedule, rating, comment)
             VALUES (?,?,?,?,?,?,?,?)
         ''', (inspection_date, club_id, inspector_name,
-              club['location'] or '', club['teacher'] or '', club['schedule'] or '',
+              club['location'] or '', teacher_saved, club['schedule'] or '',
               rating, comment))
         flash('巡课评价已提交', 'success')
     db.commit()
@@ -1151,6 +1221,36 @@ def admin_reg_status(rid, status):
     return redirect(url_for('admin_registrations'))
 
 
+# 批量审核报名（勾选多条 / 一键全审）
+@app.route('/admin/registrations/batch', methods=['POST'])
+def admin_registrations_batch():
+    if not session.get('role') == 'admin':
+        return redirect(url_for('login'))
+    status = request.form.get('status')
+    if status not in ('approved', 'rejected', 'pending'):
+        flash('无效的审核操作', 'danger')
+        return redirect(url_for('admin_registrations'))
+    db = get_db()
+    # 一键全审：不选具体 id 时对全部待审核记录操作
+    ids = request.form.getlist('rids')
+    if ids:
+        ids = [i for i in ids if i.isdigit()]
+        if not ids:
+            flash('请先勾选要审核的报名记录', 'warning')
+            return redirect(url_for('admin_registrations'))
+        placeholders = ','.join('?' * len(ids))
+        db.execute(f"UPDATE registrations SET status=? WHERE id IN ({placeholders})",
+                   [status] + ids)
+        flash(f'已批量更新 {len(ids)} 条报名记录', 'success')
+    else:
+        # 一键全审：所有待审核记录
+        cur = db.execute("UPDATE registrations SET status=? WHERE status='pending'", (status,))
+        n = cur.rowcount
+        flash(f'已一键{("通过" if status=="approved" else "拒绝" if status=="rejected" else "设为待定")}全部 {n} 条待审核记录', 'success')
+    db.commit()
+    return redirect(url_for('admin_registrations'))
+
+
 # 不足15人的社团处理：管理员决定继续/关闭
 @app.route('/admin/lowcount/<int:cid>/<action>', methods=['POST'])
 def admin_lowcount(cid, action):
@@ -1249,6 +1349,87 @@ def admin_teachers_batch():
     for e in errors:
         flash(e, 'warning')
     return redirect(url_for('admin_teachers'))
+
+
+# CSV 批量导入教师账号（姓名,账号,密码,擅长学科）
+@app.route('/admin/teachers/import', methods=['POST'])
+def admin_teachers_import():
+    if not session.get('role') == 'admin':
+        return redirect(url_for('login'))
+    db = get_db()
+    file = request.files.get('file')
+    if not file or not file.filename:
+        flash('请选择 CSV 文件', 'danger')
+        return redirect(url_for('admin_teachers'))
+
+    raw = file.read()
+    text = None
+    for enc in ('utf-8-sig', 'utf-8', 'gbk'):
+        try:
+            text = raw.decode(enc)
+            break
+        except UnicodeDecodeError:
+            continue
+    if text is None:
+        flash('无法识别文件编码（支持 UTF-8 / GBK）', 'danger')
+        return redirect(url_for('admin_teachers'))
+
+    created = 0
+    errors = []
+    try:
+        reader = csv.reader(io.StringIO(text))
+        for row in reader:
+            if not row:
+                continue
+            # 兼容整行一个单元格 / 逗号分隔的多列
+            parts = [p.strip() for p in (row[0].split(',') if len(row) == 1 else row)]
+            name = parts[0] if len(parts) > 0 else ''
+            if not name:
+                continue
+            # 跳过表头
+            if name in ('姓名', '教师姓名', 'name', 'Name'):
+                continue
+            username = parts[1] if len(parts) > 1 else ''
+            password = parts[2] if len(parts) > 2 and parts[2] else '123456'
+            subjects = parts[3] if len(parts) > 3 else ''
+            if not username:
+                errors.append(f'{name}: 缺少登录账号')
+                continue
+            try:
+                db.execute('INSERT INTO teachers (name, username, password, subjects) VALUES (?,?,?,?)',
+                           (name, username, password, subjects))
+                created += 1
+            except sqlite3.IntegrityError:
+                errors.append(f'{username}: 账号已存在')
+    except Exception as e:
+        flash(f'导入失败：{str(e)}', 'danger')
+        return redirect(url_for('admin_teachers'))
+
+    db.commit()
+    if created:
+        flash(f'CSV 成功导入 {created} 个教师账号（默认密码 123456）', 'success')
+    for e in errors:
+        flash(e, 'warning')
+    if created == 0 and not errors:
+        flash('CSV 中没有可导入的教师账号', 'warning')
+    return redirect(url_for('admin_teachers'))
+
+
+# 教师 CSV 模板下载
+@app.route('/admin/teachers-template')
+def admin_teachers_template():
+    if not session.get('role') == 'admin':
+        return redirect(url_for('login'))
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(['姓名', '账号', '密码', '擅长学科'])
+    writer.writerow(['王老师', 'wang', '123456', '语文,书法'])
+    writer.writerow(['李老师', 'li', '123456', '数学'])
+    data = buf.getvalue().encode('utf-8-sig')
+    resp = make_response(data)
+    resp.headers['Content-Type'] = 'text/csv; charset=utf-8'
+    resp.headers['Content-Disposition'] = 'attachment; filename="teachers_template.csv"'
+    return resp
 
 
 # 删除教师账号
