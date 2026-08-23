@@ -15,6 +15,21 @@
   .name-tag:hover:not(.disabled) { background:#dbe3ff; border-color:#667eea; }
   .name-tag.disabled { background:#f1f3f5; color:#adb5bd; cursor:not-allowed; border-color:#e9ecef; }
   .name-tag .check { color:#28a745; font-weight:bold; }
+
+  /* ===== 移动端优化 ===== */
+  @media (max-width: 768px) {
+    .container { padding-left:10px; padding-right:10px; }
+    .navbar-brand { font-size:1.05rem; }
+    /* 学生姓名标签加大，方便手指点按 */
+    .name-tag { font-size:1rem; padding:8px 14px; margin:4px; border-radius:8px; }
+    /* 手动报名表单控件加大 */
+    .card-body form .form-control, .card-body form .form-select { min-height:46px; }
+    .card-body form .btn-primary { min-height:46px; font-size:1rem; }
+    /* 社团卡片标题加粗 */
+    .club-card .card-title { font-size:1.05rem; }
+    /* 已报名表格：手机端精简列展示 */
+    .reg-table { font-size:.9rem; }
+  }
 </style>
 </head>
 <body>
@@ -195,7 +210,7 @@
     <div class="card-body">
       {% if regs %}
         <div class="table-responsive">
-          <table class="table table-sm align-middle">
+          <table class="table table-sm align-middle reg-table">
             <thead><tr><th>学生姓名</th><th>社团</th><th>类型</th><th>状态</th><th>操作</th></tr></thead>
             <tbody>
               {% for r in regs %}
