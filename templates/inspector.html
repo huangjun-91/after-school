@@ -140,7 +140,12 @@
             <input type="hidden" name="club_id" value="{{ c['id'] }}">
             <div class="small text-muted mb-2">
               📍 {{ c['location'] or '（未填地点）' }} &nbsp; 🕐 {{ c['schedule'] or '（未填时间）' }}<br>
-              👩‍🏫 授课教师：{{ c['teacher'] or '—' }} &nbsp; | &nbsp; 学生 {{ c['cnt'] }} 人
+              学生 {{ c['cnt'] }} 人
+            </div>
+            <div class="mb-3">
+              <label class="form-label">👩‍🏫 任课教师 <span class="text-muted small">（留空则不修改）</span></label>
+              <input type="text" name="teacher" class="form-control" value="{{ c['teacher'] or '' }}"
+                     placeholder="输入任课教师姓名，保存后同步更新">
             </div>
             <div class="mb-3">
               <label class="form-label">⭐ 评价星级</label>
