@@ -1445,23 +1445,6 @@ def admin_teachers_template():
     return resp
 
 
-# --- 临时清空业务数据（管理员，一次性重置用，确认后移除） ---
-@app.route('/admin/reset-business-data', methods=['POST'])
-def admin_reset_business_data():
-    if not session.get('role') == 'admin':
-        return redirect(url_for('login'))
-    db = get_db()
-    # 依赖顺序删除业务数据；保留账号体系(admin_users/class_accounts/teachers/inspectors)
-    db.execute("DELETE FROM registrations")
-    db.execute("DELETE FROM students")
-    db.execute("DELETE FROM teacher_clubs")
-    db.execute("DELETE FROM inspections")
-    db.execute("DELETE FROM clubs")
-    db.commit()
-    flash('业务数据已清空（社团/学生/报名/任教/巡课记录）', 'success')
-    return redirect(url_for('admin'))
-
-
 # 删除教师账号
 @app.route('/admin/teacher/delete/<int:tid>', methods=['POST'])
 def admin_teacher_delete(tid):
