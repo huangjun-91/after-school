@@ -400,15 +400,17 @@ def teacher_home():
         ''', (c['id'],)).fetchall()
         my_club_students[c['id']] = rows
 
-    # 可选的社团：未任教 + 启用；若设置了擅长学科，优先展示匹配的
+    # 可选的社团：未任教 + 启用 + 尚无教师负责（一个项目只能由一位教师任教）
     available = db.execute('''
         SELECT c.*,
           (SELECT COUNT(*) FROM registrations r
            WHERE r.club_id=c.id AND r.status IN ('pending','approved')) AS cnt
         FROM clubs c WHERE c.is_active=1
           AND c.id NOT IN (SELECT club_id FROM teacher_clubs WHERE teacher_id=?)
+          AND c.id NOT IN (SELECT club_id FROM teacher_clubs WHERE teacher_id<>?)
+          AND (c.teacher IS NULL OR c.teacher='' OR c.teacher=?)
         ORDER BY c.type DESC, c.id
-    ''', (teacher_id,)).fetchall()
+    ''', (teacher_id, teacher_id, teacher['name'])).fetchall()
 
     # 判断每个社团是否与擅长学科匹配（用于标注推荐）
     def matches(c):
@@ -448,6 +450,15 @@ def teacher_club_select(cid):
                      (teacher_id, cid)).fetchone()
     if dup:
         flash('你已任教该社团', 'warning')
+        return redirect(url_for('teacher_home'))
+    # 一个项目只能由一位教师任教，不能被多人选择
+    other = db.execute("SELECT 1 FROM teacher_clubs WHERE club_id=? AND teacher_id<>?",
+                       (cid, teacher_id)).fetchone()
+    if other:
+        flash(f'「{club["name"]}」已由其他教师任教，一个项目只能由一位教师负责。', 'warning')
+        return redirect(url_for('teacher_home'))
+    if club['teacher'] and club['teacher'] != session.get('teacher_name'):
+        flash(f'「{club["name"]}」已由 {club["teacher"]} 任教，一个项目只能由一位教师负责。', 'warning')
         return redirect(url_for('teacher_home'))
     # 最多任教 2 门
     cnt = db.execute("SELECT COUNT(*) FROM teacher_clubs WHERE teacher_id=?",
