@@ -253,6 +253,31 @@
                     学生 {{ my_club_students[c['id']]|length }} 人
                   </div>
 
+                  <!-- 普通社团：上课地点选择（同日唯一，运动场可重复） -->
+                  {% if c['type']=='ordinary' and c['grade'] %}
+                    {% set day = GRADE_SCHEDULE.get(c['grade']) %}
+                    {% if day %}
+                      <form method="post" action="{{ url_for('teacher_club_set_location', cid=c['id']) }}"
+                            class="d-flex align-items-center gap-2 mt-2">
+                        {% if c['location'] %}
+                          <span class="badge text-bg-success">已选地点</span>
+                        {% else %}
+                          <span class="badge text-bg-danger">⚠️ 未选择上课地点</span>
+                        {% endif %}
+                        <select name="location" class="form-select form-select-sm" required>
+                          <option value="">— 选择{{ day }}上课地点 —</option>
+                          {% for loc in day_locations.get(day, []) %}
+                            {% if loc not in day_taken.get(day, []) or loc == c['location'] %}
+                              <option value="{{ loc }}" {% if loc==c['location'] %}selected{% endif %}>{{ loc }}</option>
+                            {% endif %}
+                          {% endfor %}
+                        </select>
+                        <button class="btn btn-sm btn-outline-success text-nowrap">确定</button>
+                      </form>
+                      <div class="small text-muted mt-1">📅 {{ day }}上课 · 同一地点每天仅一个项目可用（运动场不限）</div>
+                    {% endif %}
+                  {% endif %}
+
                   <!-- 学生名单 -->
                   {% if my_club_students[c['id']] %}
                     <div class="mt-2">
