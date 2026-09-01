@@ -91,12 +91,17 @@
         <div class="card-body">
           <!-- 年级筛选（快速定位某年级的社团） -->
           <div class="d-flex align-items-center gap-2 mb-3 pb-2 border-bottom">
-            <label class="form-label small mb-0 text-nowrap">🎯 按年级筛选：</label>
-            <select class="form-select form-select-sm" id="gradeFilter" style="max-width:200px"
-                    onchange="filterClubs(this.value)">
-              <option value="">全部课程</option>
-              <option value="__premium__">精品（全校）</option>
+            <label class="form-label small mb-0 text-nowrap">🎯 筛选：</label>
+            <select class="form-select form-select-sm" id="gradeFilter" style="max-width:150px"
+                    onchange="filterClubs()">
+              <option value="">全部年级</option>
+              <option value="__premium__">精品(全校)</option>
               {% for g in GRADES %}<option value="{{ g }}">{{ g }}</option>{% endfor %}
+            </select>
+            <select class="form-select form-select-sm" id="catFilter" style="max-width:130px"
+                    onchange="filterClubs()">
+              <option value="">全部分类</option>
+              {% for cat in CATEGORIES %}<option value="{{ cat }}">{{ cat }}</option>{% endfor %}
             </select>
             <span class="small text-muted" id="filterCount"></span>
           </div>
@@ -105,11 +110,13 @@
             {% for c in available %}
               {% set is_reco = c['id'] in recommended_ids %}
               <div class="d-flex justify-content-between align-items-start border-bottom py-2 club-row"
-                   data-grade="{{ '全校' if c['type']=='premium' else (c['grade'] or '') }}">
+                   data-grade="{{ '全校' if c['type']=='premium' else (c['grade'] or '') }}"
+                   data-category="{{ c['category'] or '' }}">
                 <div class="me-3">
                   <span class="fw-bold">{{ c['name'] }}</span>
                   <span class="badge {% if c['type']=='premium' %}badge-premium{% else %}badge-ordinary{% endif %} ms-1">
                     {{ '精品(全校)' if c['type']=='premium' else '普通·'+(c['grade'] or '') }}</span>
+                  {% if c['category'] %}<span class="badge text-bg-info ms-1">{{ c['category'] }}</span>{% endif %}
                   {% if is_reco %}<span class="badge badge-reco ms-1">🌟 适合你</span>{% endif %}
                   {% if c['teacher'] %}<span class="badge text-bg-light border ms-1">现任教：{{ c['teacher'] }}</span>{% endif %}
                   <div class="small text-muted mt-1">
@@ -303,35 +310,48 @@
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script>
-  // ===== 可选课程：按年级筛选（全局函数，供下拉 onchange 调用）=====
-  function filterClubs(val){
+  // ===== 可选课程：按年级 + 分类筛选（全局函数，供下拉 onchange 调用）=====
+  function filterClubs(){
     var list = document.getElementById('availableList');
     var countEl = document.getElementById('filterCount');
+    var gradeF = document.getElementById('gradeFilter');
+    var catF = document.getElementById('catFilter');
     if (!list) return;
+    var gval = gradeF ? gradeF.value : '';
+    var cval = catF ? catF.value : '';
     var rows = list.querySelectorAll('.club-row');
     var shown = 0;
     rows.forEach(function(row){
       var g = (row.getAttribute('data-grade') || '').trim();
-      var match = false;
-      if (val === '') {
-        match = true;                          // 全部课程
-      } else if (val === '__premium__') {
-        match = (g === '全校');                // 仅精品(全校)
+      var c = (row.getAttribute('data-category') || '').trim();
+
+      // —— 年级匹配 ——
+      var gMatch;
+      if (gval === '') {
+        gMatch = true;                       // 全部年级
+      } else if (gval === '__premium__') {
+        gMatch = (g === '全校');             // 仅精品(全校)
       } else {
-        // 精确或包含匹配，容错年级书写差异（如"三年级"/"3年级"）
-        match = (g === val) || (g && g.indexOf(val) !== -1) || (val && val.indexOf(g) !== -1);
+        gMatch = (g === gval) || (g && g.indexOf(gval) !== -1) || (gval && gval.indexOf(g) !== -1);
       }
+      // —— 分类匹配 ——
+      var cMatch = cval === '' || c === cval;
+
+      var match = gMatch && cMatch;
       row.style.display = match ? '' : 'none';
       if (match) shown++;
     });
-    if (countEl) countEl.textContent = val === '' ? ('共 ' + rows.length + ' 门') : ('符合 ' + shown + ' 门');
+    if (countEl) {
+      if (gval === '' && cval === '') countEl.textContent = '共 ' + rows.length + ' 门';
+      else countEl.textContent = '符合 ' + shown + ' 门';
+    }
   }
   (function(){
-    var filter = document.getElementById('gradeFilter');
-    if (filter) {
-      filter.addEventListener('change', function(){ filterClubs(filter.value); });
-      filterClubs(filter.value);   // 初始化
-    }
+    var gradeF = document.getElementById('gradeFilter');
+    var catF = document.getElementById('catFilter');
+    if (gradeF) gradeF.addEventListener('change', filterClubs);
+    if (catF) catF.addEventListener('change', filterClubs);
+    filterClubs();   // 初始化
   })();
 </script>
 <script>
