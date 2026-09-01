@@ -505,7 +505,10 @@ def teacher_home():
           AND (c.teacher IS NULL OR c.teacher='' OR c.teacher=?)
     '''
     params = [teacher_id, teacher_id, teacher['name']]
-    if sel_grade and sel_grade != 'all':
+    if sel_grade == 'all':
+        # 只看精品社团（全校性）
+        q += ' AND c.type=\'premium\''
+    elif sel_grade:
         q += ' AND c.grade=?'
         params.append(sel_grade)
     if sel_category and sel_category != 'all':
