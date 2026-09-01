@@ -60,6 +60,13 @@
                 {% for g in GRADES %}<option value="{{ g }}">{{ g }}</option>{% endfor %}
               </select>
             </div>
+            <div class="mb-2" id="catRow">
+              <label class="form-label small">所属分类</label>
+              <select name="category" class="form-select">
+                <option value="">（请选择分类）</option>
+                {% for cat in CATEGORIES %}<option value="{{ cat }}">{{ cat }}</option>{% endfor %}
+              </select>
+            </div>
             <div class="mb-2">
               <label class="form-label small">授课教师</label>
               <input type="text" name="teacher" class="form-control" placeholder="如：王老师">
@@ -73,8 +80,8 @@
               <input type="text" name="schedule" class="form-control" placeholder="如：周一、周三 16:30-17:30">
             </div>
             <div class="mb-2">
-              <label class="form-label small">人数上限（15-30）</label>
-              <input type="number" name="max_students" class="form-control" value="30" min="15" max="30" required>
+              <label class="form-label small">人数上限（精品 10-30，普通 15-32）</label>
+              <input type="number" name="max_students" class="form-control" value="30" min="10" max="32" required>
             </div>
             <div class="mb-3">
               <label class="form-label small">简介（可选）</label>
@@ -191,6 +198,13 @@
               </select>
             </div>
             <div class="col-md-2">
+              <label class="form-label small mb-0">批量分类</label>
+              <select name="batch_category" class="form-select form-select-sm">
+                <option value="">（不修改）</option>
+                {% for cat in CATEGORIES %}<option value="{{ cat }}">{{ cat }}</option>{% endfor %}
+              </select>
+            </div>
+            <div class="col-md-2">
               <label class="form-label small mb-0">批量授课教师</label>
               <input type="text" name="batch_teacher" class="form-control form-control-sm" placeholder="留空不改">
             </div>
@@ -249,6 +263,15 @@
               {% endfor %}
             </select>
           </div>
+          <div class="mb-2" id="catRow{{ c['id'] }}">
+            <label class="form-label small">所属分类</label>
+            <select name="category" class="form-select">
+              <option value="">（请选择分类）</option>
+              {% for cat in CATEGORIES %}
+                <option value="{{ cat }}" {% if c['category']==cat %}selected{% endif %}>{{ cat }}</option>
+              {% endfor %}
+            </select>
+          </div>
           <div class="mb-2">
             <label class="form-label small">授课教师</label>
             <input type="text" name="teacher" class="form-control" value="{{ c['teacher'] or '' }}">
@@ -262,8 +285,8 @@
             <input type="text" name="schedule" class="form-control" value="{{ c['schedule'] or '' }}">
           </div>
           <div class="mb-2">
-            <label class="form-label small">人数上限（15-30）</label>
-            <input type="number" name="max_students" class="form-control" value="{{ c['max_students'] }}" min="15" max="30" required>
+            <label class="form-label small">人数上限（精品 10-30，普通 15-32）</label>
+            <input type="number" name="max_students" class="form-control" value="{{ c['max_students'] }}" min="10" max="32" required>
           </div>
           <div class="mb-0">
             <label class="form-label small">简介</label>
@@ -282,14 +305,23 @@
 
 <script>
   document.getElementById('clubType').addEventListener('change', function(){
-    document.getElementById('gradeRow').style.display =
-      this.value === 'ordinary' ? '' : 'none';
+    var isOrd = this.value === 'ordinary';
+    document.getElementById('gradeRow').style.display = isOrd ? '' : 'none';
+    var cr = document.getElementById('catRow');
+    if (cr) cr.style.display = isOrd ? '' : 'none';
   });
 
-  // 编辑模态框：类型切换时显示/隐藏年级行
+  // 编辑模态框：类型切换时显示/隐藏年级行与分类行
   document.querySelectorAll('.edit-type').forEach(function(sel){
     var target = document.getElementById(sel.dataset.target);
-    var sync = function(){ target.style.display = sel.value === 'ordinary' ? '' : 'none'; };
+    var sync = function(){
+      var isOrd = sel.value === 'ordinary';
+      if (target) target.style.display = isOrd ? '' : 'none';
+      // 同步控制分类行（catRow + club id）
+      var cid = (sel.dataset.target || '').replace('gradeRow', '');
+      var catRow = document.getElementById('catRow' + cid);
+      if (catRow) catRow.style.display = isOrd ? '' : 'none';
+    };
     sel.addEventListener('change', sync);
     sync();
   });
