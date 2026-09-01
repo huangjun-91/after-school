@@ -48,7 +48,7 @@ ORDINARY_PROJECTS = {
     '艺术': ['合唱', '乐器', '舞蹈', '演说', '书法', '绘画', '泥塑', '剪纸'],
     '文化': ['阅读与理解', '写作与鉴赏', '学科思维训练', '口语交际'],
     '科技': ['科创发明', '实验与探究', '速叠与魔方', '信息技术'],
-    '益智游戏': ['五子棋', '军棋', '象棋', '围棋', '跳棋', '24点', '三国杀'],
+    '益智游戏': ['五子棋', '军棋', '象棋', '围棋', '跳棋', '24点', '三国杀', '狼人杀'],
 }
 
 # 教师选课限制：互斥年级对（同一教师不能教的两个年级组合）
@@ -201,16 +201,16 @@ def init_db():
         db.execute("INSERT INTO admin_users (username, password) VALUES (?, ?)",
                    ('admin', 'admin123'))
 
-    # 标准普通社团体系重建（一次性）：
+    # 标准普通社团体系重建/补齐：
     # 若 clubs 表里尚无任何"年级×分类"新课标社团（旧体系 category 为空），
-    # 则清除旧社团及其关联数据，按 年级(一~六) × 分类(体育/艺术/文化/科技/益智游戏) 重建。
-    # 幂等：新课标一旦建立（存在带 category 的社团），下次启动不再重复重建。
+    # 则清除旧社团及其关联数据，按 年级(一~六) × 分类 全量重建；
+    # 若已有新课标社团，则仅增量补齐缺失的（年级×项目）组合（不删已有数据，幂等）。
     try:
         cols2 = [r[1] for r in db.execute("PRAGMA table_info(clubs)").fetchall()]
         if 'category' in cols2:
             new_cnt = db.execute("SELECT COUNT(*) FROM clubs WHERE category<>''").fetchone()[0]
             if new_cnt == 0:
-                # 清除旧社团及其关联数据（用户要求清除所有社团项目后重建）
+                # 全量重建：清除旧社团及其关联数据（用户要求清除所有社团项目后重建）
                 db.execute("DELETE FROM registrations")
                 db.execute("DELETE FROM inspections")
                 db.execute("DELETE FROM teacher_clubs")
@@ -225,6 +225,28 @@ def init_db():
                             ''', (f'{grade}{proj}', grade, cat,
                                   f'{grade}{proj}（{cat}类）',
                                   GRADE_SCHEDULE[grade], 32))
+            else:
+                # 增量补齐：检查每个（年级×项目）是否已存在，缺失则插入
+                existing = set()
+                for r in db.execute(
+                        "SELECT grade, name FROM clubs WHERE type='ordinary' AND category<>''"
+                ).fetchall():
+                    # 名称格式为 年级+项目，反推项目名
+                    g = r['grade']
+                    nm = r['name']
+                    if g and nm and nm.startswith(g):
+                        existing.add((g, nm[len(g):]))
+                for grade in GRADES:
+                    for cat, projects in ORDINARY_PROJECTS.items():
+                        for proj in projects:
+                            if (grade, proj) not in existing:
+                                db.execute('''
+                                    INSERT INTO clubs
+                                    (name, type, grade, category, description, schedule, max_students)
+                                    VALUES (?, 'ordinary', ?, ?, ?, ?, ?)
+                                ''', (f'{grade}{proj}', grade, cat,
+                                      f'{grade}{proj}（{cat}类）',
+                                      GRADE_SCHEDULE[grade], 32))
     except Exception:
         pass
 
