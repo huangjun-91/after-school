@@ -63,19 +63,43 @@
     {% endfor %}
   {% endwith %}
 
-  <!-- 日期选择 + 概览 -->
+  <!-- 日期选择 + 概览 + 筛选 -->
   <div class="card shadow-sm mb-4">
     <div class="card-body py-3">
-      <form method="get" class="row g-2 align-items-end">
-        <div class="col-md-4">
+      <form method="get" class="row g-2 align-items-end" id="filterForm">
+        <div class="col-md-3">
           <label class="form-label small">📅 选择巡课日期</label>
           <input type="date" name="date" class="form-control" value="{{ sel_date }}" max="{{ today }}">
         </div>
-        <div class="col-md-2">
-          <button class="btn btn-primary">查看当天课表</button>
+        <div class="col-md-3">
+          <label class="form-label small">📍 上课地点</label>
+          <select name="location" class="form-select">
+            <option value="">全部地点</option>
+            {% for loc in all_locations %}
+              <option value="{{ loc }}" {% if sel_location==loc %}selected{% endif %}>{{ loc }}</option>
+            {% endfor %}
+          </select>
         </div>
-        <div class="col-md-4 text-md-end ms-auto small text-muted">
+        <div class="col-md-3">
+          <label class="form-label small">🕐 上课时间</label>
+          <select name="time" class="form-select">
+            <option value="">全部时间</option>
+            {% for t in all_times %}
+              <option value="{{ t }}" {% if sel_time==t %}selected{% endif %}>{{ t }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-3">
+          <div class="d-flex gap-2">
+            <button class="btn btn-primary flex-fill">筛选</button>
+            <a href="{{ url_for('inspector_dashboard') }}" class="btn btn-outline-secondary">重置</a>
+          </div>
+        </div>
+        <div class="col-12 text-md-end small text-muted">
           共 <b>{{ total_clubs }}</b> 个社团开课，已巡课 <b>{{ inspected }}</b> 个
+          {% if sel_location or sel_time %}
+            <span class="ms-2 text-primary">（已按{% if sel_location %}地点「{{ sel_location }}」{% endif %}{% if sel_location and sel_time %}、{% endif %}{% if sel_time %}时间「{{ sel_time }}」{% endif %}筛选）</span>
+          {% endif %}
         </div>
       </form>
     </div>
@@ -103,7 +127,7 @@
           {% for s in schedule %}
             {% set c = s['club'] %}
             {% set ins = s['inspection'] %}
-          <tr>
+          <tr data-club-id="{{ c['id'] }}">
             <td class="m-cell-name">
               {{ c['name'] }}
               {% if c['description'] %}<div class="small text-muted fw-normal">{{ c['description'] }}</div>{% endif %}
@@ -171,6 +195,7 @@
           <div class="modal-body">
             <input type="hidden" name="inspection_date" value="{{ sel_date }}">
             <input type="hidden" name="club_id" value="{{ c['id'] }}">
+            <input type="hidden" name="ajax" value="1">
             <div class="small text-muted mb-2">
               📍 {{ c['location'] or '（未填地点）' }} &nbsp; 🕐 {{ c['schedule'] or '（未填时间）' }}<br>
               学生 {{ c['cnt'] }} 人
@@ -222,6 +247,81 @@
     var checked = box.querySelector('input[type=radio]:checked');
     var n = checked ? parseInt(checked.value) : 3;
     paintStars(parseInt(box.id.replace('stars','')), n);
+  });
+</script>
+<script>
+  // ===== 巡课记录实时更新（AJAX 无刷新提交）=====
+  function submitInspection(form, clubId) {
+    var btn = form.querySelector('button[type=submit]');
+    var oldText = btn ? btn.textContent : '';
+    if (btn){ btn.disabled = true; btn.textContent = '保存中…'; }
+
+    var body = new FormData(form);
+    fetch(form.action, { method: 'POST', body: body, headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+      .then(function(res){ return res.json().catch(function(){ return { ok:false, msg:'服务器响应异常' }; }); })
+      .then(function(data){
+        if (!data.ok) { alert(data.msg || '提交失败'); return; }
+
+        // 关闭模态框
+        var mod = document.getElementById('modal' + clubId);
+        var bs = bootstrap.Modal.getInstance(mod);
+        if (bs) bs.hide();
+
+        var row = document.querySelector('tr[data-club-id="' + clubId + '"]');
+        if (row) {
+          // 更新"巡课状态"单元格（第7个 td，下标6）
+          var tds = row.querySelectorAll('td');
+          if (tds[6]) {
+            tds[6].innerHTML = '<span class="m-cell-label">状态</span>' +
+              '<span class="badge text-bg-success">已巡课</span>';
+          }
+          // 更新"评价"单元格（第8个 td，下标7）为可修改按钮
+          if (tds[7]) {
+            tds[7].innerHTML =
+              '<button class="btn btn-sm btn-outline-primary" type="button" ' +
+              'data-bs-toggle="modal" data-bs-target="#modal' + clubId + '">' +
+              '⭐ ' + data.rating + ' 星 · 修改</button>';
+          }
+          // 更新第8列之后的评价详情行（table-light）
+          var detailRow = row.nextElementSibling;
+          if (detailRow && detailRow.classList.contains('table-light')) {
+            detailRow.innerHTML =
+              '<td colspan="8" class="small">' +
+              '  <span class="text-muted">巡课人：' + data.inspector + ' · 刚刚提交</span>' +
+              (data.comment ? '<br>💬 ' + escapeHtml(data.comment) : '<br><span class="text-muted">（无文字评价）</span>') +
+              '</td>';
+          } else {
+            // 没有详情行则新建一条
+            var tr = document.createElement('tr');
+            tr.className = 'table-light';
+            tr.innerHTML = '<td colspan="8" class="small">' +
+              '<span class="text-muted">巡课人：' + data.inspector + ' · 刚刚提交</span>' +
+              (data.comment ? '<br>💬 ' + escapeHtml(data.comment) : '') + '</td>';
+            row.after(tr);
+          }
+        }
+
+        alert('✅ ' + (data.msg || '巡课记录已更新'));
+      })
+      .catch(function(err){ alert('提交失败：' + err); })
+      .finally(function(){
+        if (btn){ btn.disabled = false; btn.textContent = oldText; }
+      });
+    return false; // 阻止默认整页提交
+  }
+
+  function escapeHtml(s){
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  // 为所有巡课评价模态框绑定 AJAX 提交
+  document.addEventListener('submit', function(e){
+    var f = e.target;
+    if (f && f.querySelector('input[name="ajax"]')) {
+      var clubId = f.querySelector('input[name="club_id"]').value;
+      e.preventDefault();
+      submitInspection(f, clubId);
+    }
   });
 </script>
 <script>
