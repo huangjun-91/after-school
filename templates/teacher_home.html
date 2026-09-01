@@ -105,6 +105,17 @@
         {% endif %}
         <span class="small text-muted">共 {{ available|length }} 门课程</span>
       </form>
+      <div class="d-flex align-items-center gap-2 flex-wrap mt-2 pt-2 border-top">
+        <span class="small text-muted text-nowrap">📌 各年级项目名额（已认领/上限 {{ MAX_PROJECTS_PER_GRADE }}）：</span>
+        {% for g in GRADES %}
+          {% set t = grade_taken.get(g, 0) %}
+          {% if t >= MAX_PROJECTS_PER_GRADE %}
+            <span class="badge text-bg-danger">{{ g }}：{{ t }}/{{ MAX_PROJECTS_PER_GRADE }} 已满</span>
+          {% else %}
+            <span class="badge text-bg-light border">{{ g }}：{{ t }}/{{ MAX_PROJECTS_PER_GRADE }}</span>
+          {% endif %}
+        {% endfor %}
+      </div>
     </div>
   </div>
 
@@ -141,7 +152,10 @@
                   </div>
                 </div>
                 <form method="post" action="{{ url_for('teacher_club_select', cid=c['id']) }}" class="text-nowrap">
-                  {% if my_club_count < 2 %}
+                  {% set grade_full = c['type']=='ordinary' and c['grade'] and grade_taken.get(c['grade'], 0) >= MAX_PROJECTS_PER_GRADE %}
+                  {% if grade_full %}
+                    <button class="btn btn-sm btn-secondary" disabled title="该年级项目名额已满（{{ MAX_PROJECTS_PER_GRADE }} 个）">年级已满</button>
+                  {% elif my_club_count < 2 %}
                     <button class="btn btn-sm btn-success">选择任教</button>
                   {% else %}
                     <button class="btn btn-sm btn-success" disabled title="最多任教 2 门">已满 2 门</button>
