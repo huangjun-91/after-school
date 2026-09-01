@@ -58,6 +58,29 @@ GRADE_MUTEX_PAIRS = [('一年级', '四年级'), ('二年级', '五年级'), ('�
 # 一个年级最多允许被教师任教的普通项目数（满额后该年级不再允许教师选项目）
 MAX_PROJECTS_PER_GRADE = 17
 
+# 上课地点池：按上课日（星期）划分。每个项目只能选一个唯一地点，
+# 同一天内已被其他项目占用的地点不能再选；运动场可重复（不限）。
+# 公共教室（音乐/美术/科学实验室/劳技/信息科技/科技活动/心理咨询室）跨天复用（错峰）。
+LOCATIONS_BY_DAY = {
+    '星期二': ['1.1','1.2','1.3','1.4','1.5','1.6','1.7',
+              '4.1','4.2','4.3','4.4','4.5','4.6','4.7'],
+    '星期三': ['2.1','2.2','2.3','2.4','2.5','2.6','2.7','2.8',
+              '5.1','5.2','5.3','5.4','5.5','5.6','5.7','5.8'],
+    '星期四': ['3.1','3.2','3.3','3.4','3.5','3.6','3.7','3.8',
+              '6.1','6.2','6.3','6.4','6.5','6.6','6.7'],
+}
+# 各上课日共用的公共教室
+COMMON_LOCATIONS = ['音乐室1','音乐室2','音乐室3','音乐室4','音乐室5',
+                    '美术室1','美术室2','美术室3','美术室4','美术室5',
+                    '科学实验室1','科学实验室2','劳技室1',
+                    '4楼信息科技室','5楼信息科技室','科技活动室','心理咨询室']
+# 可重复选择（不限次数）的地点
+REPEATABLE_LOCATIONS = {'运动场'}
+
+def locations_for_day(day):
+    """返回某上课日可选的唯一地点列表（不含可重复地点）"""
+    return (LOCATIONS_BY_DAY.get(day, []) + COMMON_LOCATIONS)
+
 
 # ---------- 数据库 ----------
 def get_db():
@@ -547,6 +570,24 @@ def teacher_home():
         ''', (g,)).fetchone()[0]
         grade_taken[g] = n
 
+    # 各上课日的可选地点池（供教师为任教课程选择上课地点）
+    # 每个 ordinary 社团的上课日 = GRADE_SCHEDULE[grade]
+    day_locations = {}
+    day_taken = {}
+    for day in ('星期二', '星期三', '星期四'):
+        # 该日年级
+        day_grades = [g for g, d in GRADE_SCHEDULE.items() if d == day]
+        # 该日所有可选唯一地点
+        day_locations[day] = list(REPEATABLE_LOCATIONS) + locations_for_day(day)
+        # 该日已被占用的唯一地点（运动场不算）
+        rows = db.execute('''
+            SELECT location FROM clubs WHERE type='ordinary'
+            AND grade IN (%s) AND location<>'' AND location NOT IN (%s)
+        ''' % (','.join('?' * len(day_grades)),
+               ','.join('?' * len(REPEATABLE_LOCATIONS))),
+            day_grades + list(REPEATABLE_LOCATIONS)).fetchall()
+        day_taken[day] = {r['location'] for r in rows}
+
     return render_template('teacher_home.html', teacher=teacher, subjects=subjects,
                            my_clubs=my_clubs, my_club_students=my_club_students,
                            available=available, recommended_ids=recommended_ids,
@@ -554,7 +595,8 @@ def teacher_home():
                            sel_grade=sel_grade, sel_category=sel_category,
                            my_club_count=len(my_clubs), my_grades=my_grades,
                            GRADE_SCHEDULE=GRADE_SCHEDULE,
-                           grade_taken=grade_taken, MAX_PROJECTS_PER_GRADE=MAX_PROJECTS_PER_GRADE)
+                           grade_taken=grade_taken, MAX_PROJECTS_PER_GRADE=MAX_PROJECTS_PER_GRADE,
+                           day_locations=day_locations, day_taken=day_taken)
 
 
 @app.route('/teacher/club/select/<int:cid>', methods=['POST'])
@@ -732,6 +774,62 @@ def teacher_club_leave(cid):
     return redirect(url_for('teacher_home'))
 
 
+@app.route('/teacher/club/location/<int:cid>', methods=['POST'])
+def teacher_club_set_location(cid):
+    """教师为自己任教的普通社团选择唯一上课地点。
+    - 地点只能从该社团上课日（由年级经 GRADE_SCHEDULE 推出）的可用池中选择
+    - 同一天内已被其他项目占用的地点（运动场除外）不能再选
+    """
+    if not session.get('role') == 'staff':
+        return redirect(url_for('login'))
+    db = get_db()
+    teacher_id = session['teacher_id']
+    club = db.execute("SELECT * FROM clubs WHERE id=?", (cid,)).fetchone()
+    if not club:
+        flash('社团不存在', 'danger')
+        return redirect(url_for('teacher_home'))
+    # 必须是本人任教的社团
+    mine = db.execute("SELECT 1 FROM teacher_clubs WHERE teacher_id=? AND club_id=?",
+                      (teacher_id, cid)).fetchone()
+    if not mine:
+        flash('只能为你任教的课程选择地点', 'warning')
+        return redirect(url_for('teacher_home'))
+    # 仅普通社团需要唯一地点（精品为全校，可由管理员安排，此处不做唯一约束）
+    if club['type'] != 'ordinary':
+        flash('精品社团地点由管理员统一安排', 'warning')
+        return redirect(url_for('teacher_home'))
+
+    loc = request.form.get('location', '').strip()
+    day = GRADE_SCHEDULE.get(club['grade'])
+    if not day:
+        flash('无法确定该课程的上课日', 'warning')
+        return redirect(url_for('teacher_home'))
+    if loc in REPEATABLE_LOCATIONS:
+        # 运动场等可重复地点，直接保存
+        db.execute("UPDATE clubs SET location=? WHERE id=?", (loc, cid))
+        db.commit()
+        flash(f'已为「{club["name"]}」选择上课地点：{loc}', 'success')
+        return redirect(url_for('teacher_home'))
+    pool = locations_for_day(day)
+    if loc not in pool:
+        flash(f'「{loc}」不是{day}的可选地点，请从该日地点池中选择。', 'warning')
+        return redirect(url_for('teacher_home'))
+    # 唯一性：同上课日下，非重复地点已被其他普通社团占用则不可选
+    day_grades = [g for g, d in GRADE_SCHEDULE.items() if d == day]
+    taken = db.execute('''
+        SELECT COUNT(*) FROM clubs
+        WHERE type='ordinary' AND grade IN (%s) AND location=? AND id<>?
+    ''' % ','.join('?' * len(day_grades)),
+        day_grades + [loc, cid]).fetchone()[0]
+    if taken > 0:
+        flash(f'「{loc}」在{day}已被其他项目占用，请选择其他地点。', 'warning')
+        return redirect(url_for('teacher_home'))
+    db.execute("UPDATE clubs SET location=? WHERE id=?", (loc, cid))
+    db.commit()
+    flash(f'已为「{club["name"]}」选择上课地点：{loc}', 'success')
+    return redirect(url_for('teacher_home'))
+
+
 @app.route('/teacher/club/edit/<int:cid>', methods=['POST'])
 def teacher_club_edit(cid):
     """授课教师编辑自己任教的社团内容（项目名称、上课地点等）"""
@@ -763,6 +861,24 @@ def teacher_club_edit(cid):
     if not name:
         flash('课程名称不能为空', 'danger')
         return redirect(url_for('teacher_home'))
+
+    # 普通社团上课地点唯一性校验（防止编辑时绕过选地点规则）
+    if club['type'] == 'ordinary' and location and location not in REPEATABLE_LOCATIONS and club['grade']:
+        day = GRADE_SCHEDULE.get(club['grade'])
+        if day:
+            pool = locations_for_day(day)
+            if location not in pool:
+                flash(f'「{location}」不是{day}的可选地点，请从该日地点池中选择。', 'warning')
+                return redirect(url_for('teacher_home'))
+            day_grades = [g for g, d in GRADE_SCHEDULE.items() if d == day]
+            taken = db.execute('''
+                SELECT COUNT(*) FROM clubs
+                WHERE type='ordinary' AND grade IN (%s) AND location=? AND id<>?
+            ''' % ','.join('?' * len(day_grades)),
+                day_grades + [location, cid]).fetchone()[0]
+            if taken > 0:
+                flash(f'「{location}」在{day}已被其他项目占用，请选择其他地点。', 'warning')
+                return redirect(url_for('teacher_home'))
 
     db.execute('''
         UPDATE clubs SET name=?, location=?, schedule=?, description=? WHERE id=?
