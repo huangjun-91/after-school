@@ -552,6 +552,46 @@ def teacher_club_leave(cid):
     return redirect(url_for('teacher_home'))
 
 
+@app.route('/teacher/club/edit/<int:cid>', methods=['POST'])
+def teacher_club_edit(cid):
+    """授课教师编辑自己任教的社团内容（项目名称、上课地点等）"""
+    if not session.get('role') == 'staff':
+        return redirect(url_for('login'))
+    db = get_db()
+    teacher_id = session['teacher_id']
+    teacher = db.execute("SELECT * FROM teachers WHERE id=?", (teacher_id,)).fetchone()
+    if not teacher:
+        flash('教师账号不存在', 'danger')
+        return redirect(url_for('teacher_home'))
+
+    # 权限：只能编辑自己任教的社团
+    own = db.execute("SELECT 1 FROM teacher_clubs WHERE teacher_id=? AND club_id=?",
+                     (teacher_id, cid)).fetchone()
+    if not own:
+        flash('你只能编辑自己任教的社团', 'danger')
+        return redirect(url_for('teacher_home'))
+    club = db.execute("SELECT * FROM clubs WHERE id=?", (cid,)).fetchone()
+    if not club:
+        flash('社团不存在', 'danger')
+        return redirect(url_for('teacher_home'))
+
+    name = request.form.get('name', '').strip()
+    location = request.form.get('location', '').strip()
+    schedule = request.form.get('schedule', '').strip()
+    description = request.form.get('description', '').strip()
+
+    if not name:
+        flash('课程名称不能为空', 'danger')
+        return redirect(url_for('teacher_home'))
+
+    db.execute('''
+        UPDATE clubs SET name=?, location=?, schedule=?, description=? WHERE id=?
+    ''', (name, location, schedule, description, cid))
+    db.commit()
+    flash(f'课程「{name}」内容已更新', 'success')
+    return redirect(url_for('teacher_home'))
+
+
 # ================= 功能二：巡课记录 =================
 @app.route('/inspector')
 def inspector_dashboard():
@@ -569,14 +609,32 @@ def inspector_dashboard():
     except ValueError:
         sel_date = today
 
+    # 上课时间 / 上课地点 筛选（功能二优化：可筛选巡课时间、上课地点）
+    sel_time = request.args.get('time', '').strip()
+    sel_location = request.args.get('location', '').strip()
+
     # 当日排课：有上课地点/时间的启用社团；未排课地点时间的也列出（可巡课）
-    day_clubs = db.execute('''
+    query = '''
         SELECT c.*,
           (SELECT COUNT(*) FROM registrations r
            WHERE r.club_id=c.id AND r.status IN ('pending','approved')) AS cnt
         FROM clubs c WHERE c.is_active=1
-        ORDER BY c.type DESC, c.id
-    ''').fetchall()
+    '''
+    params = []
+    if sel_time:
+        query += ' AND c.schedule LIKE ?'
+        params.append('%' + sel_time + '%')
+    if sel_location:
+        query += ' AND c.location LIKE ?'
+        params.append('%' + sel_location + '%')
+    query += ' ORDER BY c.type DESC, c.id'
+    day_clubs = db.execute(query, params).fetchall()
+
+    # 所有可选地点/时间（用于筛选下拉）——来自现有社团
+    all_locations = [r[0] for r in db.execute(
+        "SELECT DISTINCT location FROM clubs WHERE is_active=1 AND location<>'' ORDER BY location").fetchall()]
+    all_times = [r[0] for r in db.execute(
+        "SELECT DISTINCT schedule FROM clubs WHERE is_active=1 AND schedule<>'' ORDER BY schedule").fetchall()]
 
     # 已存在的巡课记录（该日）
     existing = {}
@@ -596,14 +654,16 @@ def inspector_dashboard():
     inspected = sum(1 for s in schedule if s['inspection'])
     return render_template('inspector.html', schedule=schedule, sel_date=sel_date,
                            today=today, inspector_name=inspector_name,
-                           total_clubs=total_clubs, inspected=inspected)
+                           total_clubs=total_clubs, inspected=inspected,
+                           sel_time=sel_time, sel_location=sel_location,
+                           all_locations=all_locations, all_times=all_times)
 
 
 @app.route('/inspector/submit', methods=['POST'])
 def inspector_submit():
-    """提交巡课评价反馈（可同时修改该社团的任课教师）"""
+    """提交巡课评价反馈（可同时修改该社团的任课教师）；支持 AJAX 实时更新"""
     if not session.get('role') == 'inspector':
-        return redirect(url_for('login'))
+        return jsonify(ok=False, msg='未登录或权限不足'), 403
     db = get_db()
     inspection_date = request.form.get('inspection_date', '').strip()
     club_id = request.form.get('club_id')
@@ -611,32 +671,35 @@ def inspector_submit():
     comment = request.form.get('comment', '').strip()
     new_teacher = request.form.get('teacher', '').strip()   # 可修改任课教师
     inspector_name = session.get('inspector_name', '巡课人员')
+    is_ajax = request.form.get('ajax', '') == '1'
+
+    def _fail(msg, code=400):
+        if is_ajax:
+            return jsonify(ok=False, msg=msg), code
+        flash(msg, 'danger')
+        return redirect(url_for('inspector_dashboard'))
 
     try:
         datetime.strptime(inspection_date, '%Y-%m-%d')
     except ValueError:
-        flash('日期格式错误', 'danger')
-        return redirect(url_for('inspector_dashboard'))
+        return _fail('日期格式错误')
 
     club = db.execute("SELECT * FROM clubs WHERE id=?", (club_id,)).fetchone()
     if not club:
-        flash('社团不存在', 'danger')
-        return redirect(url_for('inspector_dashboard'))
+        return _fail('社团不存在')
 
     try:
         rating = int(rating)
         if not (1 <= rating <= 5):
             raise ValueError
     except ValueError:
-        flash('评分需在 1-5 星之间', 'danger')
-        return redirect(url_for('inspector_dashboard'))
+        return _fail('评分需在 1-5 星之间')
 
     # 若巡课人填写了任课教师且与当前不同，则同步更新社团的授课教师字段
     teacher_saved = club['teacher'] or ''
     if new_teacher and new_teacher != (club['teacher'] or ''):
         db.execute("UPDATE clubs SET teacher=? WHERE id=?", (new_teacher, club_id))
         teacher_saved = new_teacher
-        flash('已同步更新任课教师', 'success')
 
     # 同一日同一社团重复巡课 -> 更新覆盖
     existing = db.execute(
@@ -649,7 +712,6 @@ def inspector_submit():
         ''', (inspector_name, rating, comment,
               club['location'] or '', teacher_saved, club['schedule'] or '',
               existing['id']))
-        flash('巡课记录已更新', 'success')
     else:
         db.execute('''
             INSERT INTO inspections
@@ -658,8 +720,13 @@ def inspector_submit():
         ''', (inspection_date, club_id, inspector_name,
               club['location'] or '', teacher_saved, club['schedule'] or '',
               rating, comment))
-        flash('巡课评价已提交', 'success')
     db.commit()
+
+    if is_ajax:
+        return jsonify(ok=True, msg='巡课记录已更新', rating=rating,
+                       comment=comment, inspector=inspector_name,
+                       club_id=club_id, date=inspection_date)
+    flash('巡课评价已提交', 'success')
     return redirect(url_for('inspector_dashboard', date=inspection_date))
 
 
@@ -723,6 +790,112 @@ def admin_club_toggle(cid):
     db = get_db()
     db.execute("UPDATE clubs SET is_active = 1 - is_active WHERE id=?", (cid,))
     db.commit()
+    return redirect(url_for('admin_dashboard'))
+
+
+# 管理员：编辑单个社团内容（项目名称、类型、年级、授课教师、上课地点、上课时间、人数上限、简介）
+@app.route('/admin/club/edit/<int:cid>', methods=['POST'])
+def admin_club_edit(cid):
+    if not session.get('role') == 'admin':
+        return redirect(url_for('login'))
+    db = get_db()
+    club = db.execute("SELECT * FROM clubs WHERE id=?", (cid,)).fetchone()
+    if not club:
+        flash('社团不存在', 'danger')
+        return redirect(url_for('admin_dashboard'))
+
+    name = request.form.get('name', '').strip()
+    ctype = request.form.get('type')
+    grade = request.form.get('grade') or None
+    teacher = request.form.get('teacher', '').strip()
+    location = request.form.get('location', '').strip()
+    schedule = request.form.get('schedule', '').strip()
+    description = request.form.get('description', '').strip()
+    max_students = request.form.get('max_students', MAX_STUDENTS_DEFAULT)
+
+    if not name:
+        flash('社团名称不能为空', 'danger')
+        return redirect(url_for('admin_dashboard'))
+    if ctype not in ('ordinary', 'premium'):
+        ctype = club['type']
+    if ctype == 'ordinary' and grade not in GRADES:
+        flash('普通社团必须选择所属年级', 'danger')
+        return redirect(url_for('admin_dashboard'))
+    if ctype == 'premium':
+        grade = None
+    try:
+        max_students = int(max_students)
+        if not (15 <= max_students <= 30):
+            raise ValueError
+    except ValueError:
+        flash('人数上限需在 15-30 之间', 'danger')
+        return redirect(url_for('admin_dashboard'))
+
+    db.execute('''
+        UPDATE clubs SET name=?, type=?, grade=?, teacher=?, location=?,
+                         schedule=?, description=?, max_students=? WHERE id=?
+    ''', (name, ctype, grade, teacher, location, schedule, description,
+          max_students, cid))
+    db.commit()
+    flash(f'社团「{name}」内容已更新', 'success')
+    return redirect(url_for('admin_dashboard'))
+
+
+# 管理员：批量修改社团内容（勾选多个社团，统一更新某项/多项内容）
+@app.route('/admin/clubs/batch-edit', methods=['POST'])
+def admin_clubs_batch_edit():
+    if not session.get('role') == 'admin':
+        return redirect(url_for('login'))
+    db = get_db()
+    ids = [i for i in request.form.getlist('cids') if i.isdigit()]
+    if not ids:
+        flash('请先勾选要修改的社团', 'warning')
+        return redirect(url_for('admin_dashboard'))
+
+    placeholders = ','.join('?' * len(ids))
+    sets = []
+    params = []
+    # 仅更新填写了值的字段（留空表示不修改，避免误覆盖）
+    field_map = [
+        ('batch_type', 'type'),
+        ('batch_grade', 'grade'),
+        ('batch_teacher', 'teacher'),
+        ('batch_location', 'location'),
+        ('batch_schedule', 'schedule'),
+    ]
+    batch_type_val = request.form.get('batch_type', '').strip()
+    batch_grade_val = request.form.get('batch_grade', '').strip()
+    for form_key, col in field_map:
+        val = request.form.get(form_key, '').strip()
+        if form_key == 'batch_type' and val not in ('ordinary', 'premium'):
+            continue
+        if form_key == 'batch_grade' and not val:
+            continue
+        # 批量设为精品时忽略年级（精品为全校，不设年级）
+        if form_key == 'batch_grade' and batch_type_val == 'premium':
+            continue
+        # 批量设为普通时忽略年级同列的类型字段（由年级分支处理）
+        if val:
+            sets.append(f"{col}=?")
+            params.append(val)
+            if col == 'type' and val == 'premium':
+                sets.append("grade=NULL")
+            elif col == 'grade':
+                sets.append("type='ordinary'")
+
+    desc = request.form.get('batch_description', '').strip()
+    if desc:
+        sets.append("description=?")
+        params.append(desc)
+
+    if not sets:
+        flash('未填写任何要批量修改的内容（至少填一项并勾选社团）', 'warning')
+        return redirect(url_for('admin_dashboard'))
+
+    params.extend(ids)
+    db.execute(f"UPDATE clubs SET {', '.join(sets)} WHERE id IN ({placeholders})", params)
+    db.commit()
+    flash(f'已批量修改 {len(ids)} 个社团', 'success')
     return redirect(url_for('admin_dashboard'))
 
 
