@@ -25,8 +25,35 @@ os.makedirs(DATA_DIR, exist_ok=True)
 DB_PATH = os.path.join(DATA_DIR, 'afterschool.db')
 
 GRADES = ['一年级', '二年级', '三年级', '四年级', '五年级', '六年级']
-MAX_STUDENTS_DEFAULT = 30
+
+# 社团分类（普通社团按 年级×分类 设立）
+CATEGORIES = ['体育', '艺术', '文化', '科技', '益智游戏']
+
+# 上课时间规则：年级 -> 星期（一、四周二；二、五周三；三、六周四）
+GRADE_SCHEDULE = {
+    '一年级': '星期二', '四年级': '星期二',
+    '二年级': '星期三', '五年级': '星期三',
+    '三年级': '星期四', '六年级': '星期四',
+}
+
+# 人数限制：普通社团 15-32，精品社团 10-30
 MIN_STUDENTS = 15
+MAX_STUDENTS_ORDINARY = 32
+MAX_STUDENTS_PREMIUM = 30
+MAX_STUDENTS_DEFAULT = 30
+
+# 普通社团项目模板：分类 -> 项目名列表
+ORDINARY_PROJECTS = {
+    '体育': ['足球', '篮球', '羽毛球', '乒乓球', '跳绳'],
+    '艺术': ['合唱', '乐器', '舞蹈', '演说', '书法', '绘画', '泥塑', '剪纸'],
+    '文化': ['阅读与理解', '写作与鉴赏', '学科思维训练', '口语交际'],
+    '科技': ['科创发明', '实验与探究', '速叠与魔方', '信息技术'],
+    '益智游戏': ['五子棋', '军棋', '象棋', '围棋', '跳棋', '24点', '三国杀'],
+}
+
+# 教师选课限制：互斥年级对（同一教师不能教的两个年级组合）
+# 因为一、四同周二上课；二、五同周三；三、六同周四
+GRADE_MUTEX_PAIRS = [('一年级', '四年级'), ('二年级', '五年级'), ('三年级', '六年级')]
 
 
 # ---------- 数据库 ----------
@@ -150,7 +177,8 @@ def init_db():
         cols = [r[1] for r in db.execute("PRAGMA table_info(clubs)").fetchall()]
         for col, ddl in [('teacher', 'TEXT DEFAULT \'\''),
                          ('location', 'TEXT DEFAULT \'\''),
-                         ('schedule', 'TEXT DEFAULT \'\'')]:
+                         ('schedule', 'TEXT DEFAULT \'\''),
+                         ('category', 'TEXT DEFAULT \'\'')]:
             if col not in cols:
                 db.execute(f'ALTER TABLE clubs ADD COLUMN {col} {ddl}')
     except Exception:
@@ -172,6 +200,34 @@ def init_db():
     if cur.fetchone()[0] == 0:
         db.execute("INSERT INTO admin_users (username, password) VALUES (?, ?)",
                    ('admin', 'admin123'))
+
+    # 标准普通社团体系重建（一次性）：
+    # 若 clubs 表里尚无任何"年级×分类"新课标社团（旧体系 category 为空），
+    # 则清除旧社团及其关联数据，按 年级(一~六) × 分类(体育/艺术/文化/科技/益智游戏) 重建。
+    # 幂等：新课标一旦建立（存在带 category 的社团），下次启动不再重复重建。
+    try:
+        cols2 = [r[1] for r in db.execute("PRAGMA table_info(clubs)").fetchall()]
+        if 'category' in cols2:
+            new_cnt = db.execute("SELECT COUNT(*) FROM clubs WHERE category<>''").fetchone()[0]
+            if new_cnt == 0:
+                # 清除旧社团及其关联数据（用户要求清除所有社团项目后重建）
+                db.execute("DELETE FROM registrations")
+                db.execute("DELETE FROM inspections")
+                db.execute("DELETE FROM teacher_clubs")
+                db.execute("DELETE FROM clubs")
+                for grade in GRADES:
+                    for cat, projects in ORDINARY_PROJECTS.items():
+                        for proj in projects:
+                            db.execute('''
+                                INSERT INTO clubs
+                                (name, type, grade, category, description, schedule, max_students)
+                                VALUES (?, 'ordinary', ?, ?, ?, ?, ?)
+                            ''', (f'{grade}{proj}', grade, cat,
+                                  f'{grade}{proj}（{cat}类）',
+                                  GRADE_SCHEDULE[grade], 32))
+    except Exception:
+        pass
+
     db.commit()
     db.close()
 
@@ -191,6 +247,18 @@ def count_registrations(db, club_id, status=None):
         cur = db.execute("SELECT COUNT(*) FROM registrations WHERE club_id=? AND status IN ('pending','approved')",
                          (club_id,))
     return cur.fetchone()[0]
+
+
+def validate_max_students(ctype, value):
+    """校验并返回人数上限：普通社团 15-32，精品社团 10-30。
+    返回 (ok, max_students 或 None)"""
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return False, None
+    if ctype == 'premium':
+        return (10 <= n <= 30), n
+    return (MIN_STUDENTS <= n <= MAX_STUDENTS_ORDINARY), n
 
 
 # ---------- 公共页面 ----------
@@ -401,7 +469,11 @@ def teacher_home():
         my_club_students[c['id']] = rows
 
     # 可选的社团：未任教 + 启用 + 尚无教师负责（一个项目只能由一位教师任教）
-    available = db.execute('''
+    # 支持按 年级 / 分类 筛选
+    sel_grade = request.args.get('grade', '').strip()
+    sel_category = request.args.get('category', '').strip()
+
+    q = '''
         SELECT c.*,
           (SELECT COUNT(*) FROM registrations r
            WHERE r.club_id=c.id AND r.status IN ('pending','approved')) AS cnt
@@ -409,8 +481,16 @@ def teacher_home():
           AND c.id NOT IN (SELECT club_id FROM teacher_clubs WHERE teacher_id=?)
           AND c.id NOT IN (SELECT club_id FROM teacher_clubs WHERE teacher_id<>?)
           AND (c.teacher IS NULL OR c.teacher='' OR c.teacher=?)
-        ORDER BY c.type DESC, c.id
-    ''', (teacher_id, teacher_id, teacher['name'])).fetchall()
+    '''
+    params = [teacher_id, teacher_id, teacher['name']]
+    if sel_grade and sel_grade != 'all':
+        q += ' AND c.grade=?'
+        params.append(sel_grade)
+    if sel_category and sel_category != 'all':
+        q += ' AND c.category=?'
+        params.append(sel_category)
+    q += ' ORDER BY c.type DESC, c.' + ('grade' if sel_grade and sel_grade != 'all' else 'id')
+    available = db.execute(q, params).fetchall()
 
     # 判断每个社团是否与擅长学科匹配（用于标注推荐）
     def matches(c):
@@ -427,11 +507,17 @@ def teacher_home():
 
     recommended_ids = [c['id'] for c in available if matches(c)]
 
+    # 教师已任教社团的年级集合（用于前端提示互斥规则）
+    my_grades = sorted({c['grade'] for c in my_clubs if c['grade']})
+
     # 所有教师（用于后台管理展示，教师端不需要）
     return render_template('teacher_home.html', teacher=teacher, subjects=subjects,
                            my_clubs=my_clubs, my_club_students=my_club_students,
                            available=available, recommended_ids=recommended_ids,
-                           GRADES=GRADES, my_club_count=len(my_clubs))
+                           GRADES=GRADES, CATEGORIES=CATEGORIES,
+                           sel_grade=sel_grade, sel_category=sel_category,
+                           my_club_count=len(my_clubs), my_grades=my_grades,
+                           GRADE_SCHEDULE=GRADE_SCHEDULE)
 
 
 @app.route('/teacher/club/select/<int:cid>', methods=['POST'])
@@ -466,6 +552,26 @@ def teacher_club_select(cid):
     if cnt >= 2:
         flash('每位教师最多只能任教 2 门课程。如需调整，请先在右侧退出已任教的课程。', 'warning')
         return redirect(url_for('teacher_home'))
+
+    # 组合限制：不能教同一个年级的 2 个项目；不能教互斥年级组合（一四/二五/三六，因同日上课）
+    if cnt >= 1 and club['grade']:
+        my_club_rows = db.execute('''
+            SELECT c.grade FROM teacher_clubs tc JOIN clubs c ON tc.club_id=c.id
+            WHERE tc.teacher_id=?
+        ''', (teacher_id,)).fetchall()
+        for row in my_club_rows:
+            g = row['grade']
+            if not g:
+                continue
+            if g == club['grade']:
+                flash(f'不能同时任教同一个年级（{club["grade"]}）的两个项目。请选择其他年级。', 'warning')
+                return redirect(url_for('teacher_home'))
+            # 互斥组合判断
+            pair = {g, club['grade']}
+            for (a, b) in GRADE_MUTEX_PAIRS:
+                if pair == {a, b}:
+                    flash(f'「{club["grade"]}」与「{g}」为同一天上课的互斥组合，不能由同一位教师同时任教。', 'warning')
+                    return redirect(url_for('teacher_home'))
     try:
         db.execute("INSERT INTO teacher_clubs (teacher_id, club_id) VALUES (?,?)",
                    (teacher_id, cid))
@@ -514,12 +620,31 @@ def teacher_club_create():
         return redirect(url_for('teacher_home'))
     if ctype == 'premium':
         grade = None
-    try:
-        max_students = int(max_students)
-        if not (15 <= max_students <= 30):
-            raise ValueError
-    except ValueError:
-        max_students = MAX_STUDENTS_DEFAULT
+    ok, max_students = validate_max_students(ctype, max_students)
+    if not ok:
+        if ctype == 'premium':
+            flash('精品社团人数上限需在 10-30 之间', 'danger')
+        else:
+            flash('普通社团人数上限需在 15-32 之间', 'danger')
+        return redirect(url_for('teacher_home'))
+
+    # 组合限制：自创课程也受 2 门 + 同年级/互斥年级规则约束
+    if grade:
+        my_club_rows = db.execute('''
+            SELECT c.grade FROM teacher_clubs tc JOIN clubs c ON tc.club_id=c.id
+            WHERE tc.teacher_id=?
+        ''', (teacher_id,)).fetchall()
+        for row in my_club_rows:
+            g = row['grade']
+            if not g:
+                continue
+            if g == grade:
+                flash(f'不能同时任教同一个年级（{grade}）的两个项目。请选择其他年级。', 'warning')
+                return redirect(url_for('teacher_home'))
+            for (a, b) in GRADE_MUTEX_PAIRS:
+                if {g, grade} == {a, b}:
+                    flash(f'「{grade}」与「{g}」为同一天上课的互斥组合，不能由同一位教师同时任教。', 'warning')
+                    return redirect(url_for('teacher_home'))
 
     cur = db.execute('''
         INSERT INTO clubs (name, type, grade, description, teacher, location, schedule, max_students)
@@ -743,7 +868,7 @@ def admin_dashboard():
     ''').fetchall()
     low_count = [c for c in clubs if c['cnt'] < MIN_STUDENTS]
     return render_template('admin.html', clubs=clubs, low_count=low_count,
-                           MIN_STUDENTS=MIN_STUDENTS, GRADES=GRADES)
+                           MIN_STUDENTS=MIN_STUDENTS, GRADES=GRADES, CATEGORIES=CATEGORIES)
 
 
 @app.route('/admin/club/create', methods=['POST'])
@@ -758,6 +883,9 @@ def admin_club_create():
     teacher = request.form.get('teacher', '').strip()
     location = request.form.get('location', '').strip()
     schedule = request.form.get('schedule', '').strip()
+    category = request.form.get('category', '').strip()
+    if ctype == 'premium':
+        grade = None
     db = get_db()
 
     if not name or ctype not in ('ordinary', 'premium'):
@@ -766,18 +894,21 @@ def admin_club_create():
     if ctype == 'ordinary' and grade not in GRADES:
         flash('普通社团必须选择所属年级', 'danger')
         return redirect(url_for('admin_dashboard'))
-    try:
-        max_students = int(max_students)
-        if not (15 <= max_students <= 30):
-            raise ValueError
-    except ValueError:
-        flash('人数上限需在 15-30 之间', 'danger')
+    ok, max_students = validate_max_students(ctype, max_students)
+    if not ok:
+        if ctype == 'premium':
+            flash('精品社团人数上限需在 10-30 之间', 'danger')
+        else:
+            flash('普通社团人数上限需在 15-32 之间', 'danger')
+        return redirect(url_for('admin_dashboard'))
+    if ctype == 'ordinary' and category not in CATEGORIES:
+        flash('普通社团必须选择所属分类（体育/艺术/文化/科技/益智游戏）', 'danger')
         return redirect(url_for('admin_dashboard'))
 
     db.execute('''
-        INSERT INTO clubs (name, type, grade, description, teacher, location, schedule, max_students)
-        VALUES (?,?,?,?,?,?,?,?)
-    ''', (name, ctype, grade, description, teacher, location, schedule, max_students))
+        INSERT INTO clubs (name, type, grade, category, description, teacher, location, schedule, max_students)
+        VALUES (?,?,?,?,?,?,?,?,?)
+    ''', (name, ctype, grade, category, description, teacher, location, schedule, max_students))
     db.commit()
     flash(f'社团 "{name}" 创建成功', 'success')
     return redirect(url_for('admin_dashboard'))
@@ -811,6 +942,7 @@ def admin_club_edit(cid):
     location = request.form.get('location', '').strip()
     schedule = request.form.get('schedule', '').strip()
     description = request.form.get('description', '').strip()
+    category = request.form.get('category', '').strip()
     max_students = request.form.get('max_students', MAX_STUDENTS_DEFAULT)
 
     if not name:
@@ -823,18 +955,21 @@ def admin_club_edit(cid):
         return redirect(url_for('admin_dashboard'))
     if ctype == 'premium':
         grade = None
-    try:
-        max_students = int(max_students)
-        if not (15 <= max_students <= 30):
-            raise ValueError
-    except ValueError:
-        flash('人数上限需在 15-30 之间', 'danger')
+    ok, max_students = validate_max_students(ctype, max_students)
+    if not ok:
+        if ctype == 'premium':
+            flash('精品社团人数上限需在 10-30 之间', 'danger')
+        else:
+            flash('普通社团人数上限需在 15-32 之间', 'danger')
+        return redirect(url_for('admin_dashboard'))
+    if ctype == 'ordinary' and category not in CATEGORIES:
+        flash('普通社团必须选择所属分类（体育/艺术/文化/科技/益智游戏）', 'danger')
         return redirect(url_for('admin_dashboard'))
 
     db.execute('''
-        UPDATE clubs SET name=?, type=?, grade=?, teacher=?, location=?,
+        UPDATE clubs SET name=?, type=?, grade=?, category=?, teacher=?, location=?,
                          schedule=?, description=?, max_students=? WHERE id=?
-    ''', (name, ctype, grade, teacher, location, schedule, description,
+    ''', (name, ctype, grade, category, teacher, location, schedule, description,
           max_students, cid))
     db.commit()
     flash(f'社团「{name}」内容已更新', 'success')
@@ -859,17 +994,21 @@ def admin_clubs_batch_edit():
     field_map = [
         ('batch_type', 'type'),
         ('batch_grade', 'grade'),
+        ('batch_category', 'category'),
         ('batch_teacher', 'teacher'),
         ('batch_location', 'location'),
         ('batch_schedule', 'schedule'),
     ]
     batch_type_val = request.form.get('batch_type', '').strip()
     batch_grade_val = request.form.get('batch_grade', '').strip()
+    batch_category_val = request.form.get('batch_category', '').strip()
     for form_key, col in field_map:
         val = request.form.get(form_key, '').strip()
         if form_key == 'batch_type' and val not in ('ordinary', 'premium'):
             continue
         if form_key == 'batch_grade' and not val:
+            continue
+        if form_key == 'batch_category' and val not in CATEGORIES:
             continue
         # 批量设为精品时忽略年级（精品为全校，不设年级）
         if form_key == 'batch_grade' and batch_type_val == 'premium':
@@ -962,16 +1101,19 @@ def admin_clubs_import():
             schedule = parts[5] if len(parts) > 5 else ''
             try:
                 max_students = int(parts[6]) if len(parts) > 6 and parts[6] else MAX_STUDENTS_DEFAULT
-                if not (15 <= max_students <= 30):
+                ok_ms, max_students = validate_max_students(ctype, max_students)
+                if not ok_ms:
                     raise ValueError
             except ValueError:
                 max_students = MAX_STUDENTS_DEFAULT
             description = parts[7] if len(parts) > 7 else ''
+            # 第9列（index 8）：分类（普通社团可选，精品可不填）
+            category = parts[8] if len(parts) > 8 and parts[8] in CATEGORIES else ''
             try:
                 db.execute('''
-                    INSERT INTO clubs (name, type, grade, description, teacher, location, schedule, max_students)
-                    VALUES (?,?,?,?,?,?,?,?)
-                ''', (name, ctype, grade, description, teacher, location, schedule, max_students))
+                    INSERT INTO clubs (name, type, grade, category, description, teacher, location, schedule, max_students)
+                    VALUES (?,?,?,?,?,?,?,?,?)
+                ''', (name, ctype, grade, category, description, teacher, location, schedule, max_students))
                 created += 1
             except sqlite3.IntegrityError:
                 errors.append(f'{name}: 已存在，跳过')
