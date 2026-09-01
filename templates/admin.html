@@ -161,9 +161,11 @@
                 <td class="text-nowrap">
                   <button type="button" class="btn btn-sm btn-outline-primary"
                           data-bs-toggle="modal" data-bs-target="#editModal{{ c['id'] }}">编辑</button>
-                  <form method="post" action="{{ url_for('admin_club_toggle', cid=c['id']) }}" class="d-inline">
-                    <button class="btn btn-sm btn-outline-secondary">{{ '关闭' if c['is_active'] else '开放' }}</button>
-                  </form>
+                  <button type="button" class="btn btn-sm btn-outline-secondary"
+                          data-state="{{ 'close' if c['is_active'] else 'open' }}"
+                          data-single="{{ c['id'] }}"
+                          onclick="toggleClubs(this)">
+                    {{ '关闭' if c['is_active'] else '开放' }}</button>
                   <form method="post" action="{{ url_for('admin_lowcount', cid=c['id'], action='keep') }}" class="d-inline">
                     <button class="btn btn-sm btn-outline-success">确认保留</button>
                   </form>
@@ -349,6 +351,36 @@
     });
     if (!hasVal){ alert('请至少填写一项要批量修改的内容'); return false; }
     return confirm('确定批量修改 ' + n + ' 个社团？');
+  }
+
+  // 关闭/开启：勾选多个项目后，点任意项目的关闭/开启，所有勾选项目一起操作
+  function toggleClubs(btn){
+    var state = btn.dataset.state;          // 'close' 或 'open'
+    var singleId = btn.dataset.single;      // 当前项目id
+    var checked = [];
+    document.querySelectorAll('.club-check:checked').forEach(function(cb){ checked.push(cb.value); });
+    var isBatch = checked.length > 0;
+    var targetIds = isBatch ? checked : [singleId];
+    var label = state === 'open' ? '开放' : '关闭';
+    var msg = isBatch
+      ? '将批量' + label + '勾选的 ' + targetIds.length + ' 个项目，确定吗？'
+      : '确定' + label + '该项目？';
+    if (!confirm(msg)) return;
+    var form = document.createElement('form');
+    form.method = 'POST';
+    form.action = isBatch ? '/admin/clubs/batch-toggle' : '/admin/club/toggle/' + singleId;
+    targetIds.forEach(function(id){
+      var inp = document.createElement('input');
+      inp.type = 'hidden'; inp.name = 'cids'; inp.value = id;
+      form.appendChild(inp);
+    });
+    if (isBatch) {
+      var st = document.createElement('input');
+      st.type = 'hidden'; st.name = 'state'; st.value = state;
+      form.appendChild(st);
+    }
+    document.body.appendChild(form);
+    form.submit();
   }
 </script>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
