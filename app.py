@@ -1095,6 +1095,34 @@ def admin_club_toggle(cid):
     return redirect(url_for('admin_dashboard'))
 
 
+# 管理员：批量关闭/开启项目（勾选多个项目后统一设置开放/关闭）
+# 参数：cids（多个社团id）、state（open=开放 / close=关闭）
+@app.route('/admin/clubs/batch-toggle', methods=['POST'])
+def admin_clubs_batch_toggle():
+    if not session.get('role') == 'admin':
+        return redirect(url_for('login'))
+    db = get_db()
+    ids = [i for i in request.form.getlist('cids') if i.isdigit()]
+    state = request.form.get('state', '').strip()
+    if not ids:
+        flash('请先勾选要操作的项目', 'warning')
+        return redirect(url_for('admin_dashboard'))
+    if state == 'open':
+        new_val = 1
+        label = '开放'
+    elif state == 'close':
+        new_val = 0
+        label = '关闭'
+    else:
+        flash('无效的操作状态', 'warning')
+        return redirect(url_for('admin_dashboard'))
+    placeholders = ','.join('?' * len(ids))
+    db.execute(f"UPDATE clubs SET is_active=? WHERE id IN ({placeholders})", [new_val] + ids)
+    db.commit()
+    flash(f'已批量{label} {len(ids)} 个项目', 'success')
+    return redirect(url_for('admin_dashboard'))
+
+
 # 管理员：编辑单个社团内容（项目名称、类型、年级、授课教师、上课地点、上课时间、人数上限、简介）
 @app.route('/admin/club/edit/<int:cid>', methods=['POST'])
 def admin_club_edit(cid):
