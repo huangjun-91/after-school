@@ -55,6 +55,9 @@ ORDINARY_PROJECTS = {
 # 因为一、四同周二上课；二、五同周三；三、六同周四
 GRADE_MUTEX_PAIRS = [('一年级', '四年级'), ('二年级', '五年级'), ('三年级', '六年级')]
 
+# 一个年级最多允许被教师任教的普通项目数（满额后该年级不再允许教师选项目）
+MAX_PROJECTS_PER_GRADE = 17
+
 
 # ---------- 数据库 ----------
 def get_db():
@@ -535,14 +538,23 @@ def teacher_home():
     # 教师已任教社团的年级集合（用于前端提示互斥规则）
     my_grades = sorted({c['grade'] for c in my_clubs if c['grade']})
 
-    # 所有教师（用于后台管理展示，教师端不需要）
+    # 各年级已被教师任教的普通项目数（用于前端显示"已认领 X/17"名额状态）
+    grade_taken = {}
+    for g in GRADES:
+        n = db.execute('''
+            SELECT COUNT(*) FROM teacher_clubs tc JOIN clubs c ON tc.club_id=c.id
+            WHERE c.grade=? AND c.type='ordinary'
+        ''', (g,)).fetchone()[0]
+        grade_taken[g] = n
+
     return render_template('teacher_home.html', teacher=teacher, subjects=subjects,
                            my_clubs=my_clubs, my_club_students=my_club_students,
                            available=available, recommended_ids=recommended_ids,
                            GRADES=GRADES, CATEGORIES=CATEGORIES,
                            sel_grade=sel_grade, sel_category=sel_category,
                            my_club_count=len(my_clubs), my_grades=my_grades,
-                           GRADE_SCHEDULE=GRADE_SCHEDULE)
+                           GRADE_SCHEDULE=GRADE_SCHEDULE,
+                           grade_taken=grade_taken, MAX_PROJECTS_PER_GRADE=MAX_PROJECTS_PER_GRADE)
 
 
 @app.route('/teacher/club/select/<int:cid>', methods=['POST'])
@@ -577,6 +589,16 @@ def teacher_club_select(cid):
     if cnt >= 2:
         flash('每位教师最多只能任教 2 门课程。如需调整，请先在右侧退出已任教的课程。', 'warning')
         return redirect(url_for('teacher_home'))
+
+    # 年级名额限制：一个年级最多允许 17 个项目被教师任教，满额后该年级不再允许教师选项目
+    if club['grade']:
+        grade_taken = db.execute('''
+            SELECT COUNT(*) FROM teacher_clubs tc JOIN clubs c ON tc.club_id=c.id
+            WHERE c.grade=? AND c.type='ordinary'
+        ''', (club['grade'],)).fetchone()[0]
+        if grade_taken >= MAX_PROJECTS_PER_GRADE:
+            flash(f'「{club["grade"]}」的项目选课名额已满（{MAX_PROJECTS_PER_GRADE} 个项目已由教师任教），该年级暂不接受新选课。', 'warning')
+            return redirect(url_for('teacher_home'))
 
     # 组合限制：不能教同一个年级的 2 个项目；不能教互斥年级组合（一四/二五/三六，因同日上课）
     if cnt >= 1 and club['grade']:
@@ -655,6 +677,14 @@ def teacher_club_create():
 
     # 组合限制：自创课程也受 2 门 + 同年级/互斥年级规则约束
     if grade:
+        # 年级名额限制：一个年级最多允许 17 个项目被教师任教
+        grade_taken = db.execute('''
+            SELECT COUNT(*) FROM teacher_clubs tc JOIN clubs c ON tc.club_id=c.id
+            WHERE c.grade=? AND c.type='ordinary'
+        ''', (grade,)).fetchone()[0]
+        if grade_taken >= MAX_PROJECTS_PER_GRADE:
+            flash(f'「{grade}」的项目选课名额已满（{MAX_PROJECTS_PER_GRADE} 个项目已由教师任教），该年级暂不接受新选课。', 'warning')
+            return redirect(url_for('teacher_home'))
         my_club_rows = db.execute('''
             SELECT c.grade FROM teacher_clubs tc JOIN clubs c ON tc.club_id=c.id
             WHERE tc.teacher_id=?
