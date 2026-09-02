@@ -1152,6 +1152,7 @@ def admin_dashboard():
     f_grade = request.args.get('grade', '').strip()
     f_cat = request.args.get('category', '').strip()
     f_type = request.args.get('type', '').strip()
+    f_teacher = request.args.get('teacher', '').strip()
     where, params = [], []
     if f_grade:
         if f_grade == 'all':
@@ -1166,6 +1167,12 @@ def admin_dashboard():
         where.append("c.type='ordinary'")
     elif f_type == 'premium':
         where.append("c.type='premium'")
+    if f_teacher == 'has':
+        # 已有授课教师（teacher 非空，含教师认领/自建/后台指派）
+        where.append("(c.teacher IS NOT NULL AND c.teacher<>'')")
+    elif f_teacher == 'empty':
+        # 暂无授课教师（待分配）
+        where.append("(c.teacher IS NULL OR c.teacher='')")
     sql_where = ('WHERE ' + ' AND '.join(where)) if where else ''
 
     clubs = db.execute(f'''
@@ -1176,7 +1183,7 @@ def admin_dashboard():
     low_count = [c for c in clubs if c['cnt'] < MIN_STUDENTS]
     return render_template('admin.html', clubs=clubs, low_count=low_count,
                            MIN_STUDENTS=MIN_STUDENTS, GRADES=GRADES, CATEGORIES=CATEGORIES,
-                           f_grade=f_grade, f_cat=f_cat, f_type=f_type)
+                           f_grade=f_grade, f_cat=f_cat, f_type=f_type, f_teacher=f_teacher)
 
 
 @app.route('/admin/club/create', methods=['POST'])
