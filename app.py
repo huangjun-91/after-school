@@ -1170,8 +1170,53 @@ def admin_club_edit(cid):
                          schedule=?, description=?, max_students=? WHERE id=?
     ''', (name, ctype, grade, category, teacher, location, schedule, description,
           max_students, cid))
+
+    # 批量同步：勾选多个社团后，编辑其中任意一个保存 → 把本社团【被改动】的字段同步到其他勾选社团
+    # （社团名称除外——名称通常唯一，不批量改名）
+    apply_ids = [int(x) for x in request.form.getlist('apply_id') if x.isdigit()]
+    if apply_ids:
+        targets = [str(x) for x in apply_ids if x != cid]
+        if targets:
+            new_type = 'premium' if ctype == 'premium' else 'ordinary'
+            new_grade = None if ctype == 'premium' else grade
+            sets, params = [], []
+            # 类型（普通/精品）变化 → 同步；变精品时一并清空年级
+            if new_type != (club['type'] or 'ordinary'):
+                sets.append('type=?'); params.append(new_type)
+                if new_type == 'premium':
+                    sets.append('grade=NULL')
+            # 年级变化 → 同步（并确保为普通）
+            if new_grade != club['grade']:
+                if new_type == 'ordinary':
+                    sets.append("type='ordinary'")
+                sets.append('grade=?'); params.append(new_grade)
+            # 分类（类别）变化 → 同步
+            if category != (club['category'] or ''):
+                sets.append('category=?'); params.append(category)
+            if (teacher or '') != (club['teacher'] or ''):
+                sets.append('teacher=?'); params.append(teacher or '')
+            if (location or '') != (club['location'] or ''):
+                sets.append('location=?'); params.append(location or '')
+            if (schedule or '') != (club['schedule'] or ''):
+                sets.append('schedule=?'); params.append(schedule or '')
+            if (description or '') != (club['description'] or ''):
+                sets.append('description=?'); params.append(description or '')
+            try:
+                new_max = int(max_students)
+            except (TypeError, ValueError):
+                new_max = MAX_STUDENTS_DEFAULT
+            if new_max != club['max_students']:
+                sets.append('max_students=?'); params.append(new_max)
+            if sets:
+                ph = ','.join('?' * len(targets))
+                params.extend(targets)
+                db.execute(f"UPDATE clubs SET {', '.join(sets)} WHERE id IN ({ph})", params)
+                flash(f'已将改动同步应用到勾选的 {len(targets)} 个社团', 'info')
     db.commit()
-    flash(f'社团「{name}」内容已更新', 'success')
+    if apply_ids and len([x for x in apply_ids if x != cid]) > 0:
+        flash(f'社团「{name}」内容已更新，并同步到勾选的社团', 'success')
+    else:
+        flash(f'社团「{name}」内容已更新', 'success')
     return redirect(url_for('admin_dashboard'))
 
 
