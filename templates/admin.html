@@ -122,7 +122,8 @@
           <span class="small text-muted">共 {{ clubs|length }} 个</span>
         </div>
         <div class="card-body py-2 small text-muted">
-          ✅ 勾选多个社团 → 点「批量修改」可一次统一更新它们的类型、年级、教师、地点、时间、简介。
+          ✅ 勾选多个社团 → 点下方「批量修改」可统一更新它们的类型、年级、分类、教师、地点、时间、简介。<br>
+          🔄 也可以：勾选多个社团 → 点其中<b>任意一个</b>的「编辑」并修改保存 → 改动的字段会自动同步到其他勾选社团（名称除外）。
         </div>
         <div class="table-responsive">
           <table class="table table-sm align-middle mb-0">
@@ -240,7 +241,8 @@
 <div class="modal fade" id="editModal{{ c['id'] }}" tabindex="-1">
   <div class="modal-dialog">
     <div class="modal-content">
-      <form method="post" action="{{ url_for('admin_club_edit', cid=c['id']) }}">
+      <form method="post" action="{{ url_for('admin_club_edit', cid=c['id']) }}"
+            onsubmit="return applyChecked(this)">
         <div class="modal-header">
           <h5 class="modal-title">✏️ 编辑社团</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
@@ -351,6 +353,30 @@
     });
     if (!hasVal){ alert('请至少填写一项要批量修改的内容'); return false; }
     return confirm('确定批量修改 ' + n + ' 个社团？');
+  }
+
+  // 批量（从编辑框触发）：勾选 ≥2 个社团后，编辑其中任意一个并保存，
+  // 本次编辑改动的字段会同步到其他勾选社团。实现：把当前勾选的社团id带进表单。
+  function applyChecked(form){
+    var checked = document.querySelectorAll('.club-check:checked');
+    if (checked.length < 2) return true;   // 勾选不足2个 → 普通单社团编辑
+    var ids = {};
+    checked.forEach(function(cb){ ids[cb.value] = true; });
+    var n = Object.keys(ids).length;
+    if (!confirm('检测到已勾选 ' + n + ' 个社团。\n保存后，本编辑中【改动过的字段】（类型/年级/分类/教师/地点/时间/人数/简介，名称除外）将同步应用到勾选的其他社团。\n确定继续吗？')) return false;
+    var box = form.querySelector('input[name="apply_all"]');
+    if (!box) {
+      box = document.createElement('input');
+      box.type = 'hidden'; box.name = 'apply_all'; box.value = '1';
+      form.appendChild(box);
+    }
+    form.querySelectorAll('input[name="apply_id"]').forEach(function(x){ x.remove(); });
+    for (var id in ids) {
+      var inp = document.createElement('input');
+      inp.type = 'hidden'; inp.name = 'apply_id'; inp.value = id;
+      form.appendChild(inp);
+    }
+    return true;
   }
 
   // 关闭/开启：勾选多个项目后，点任意项目的关闭/开启，所有勾选项目一起操作
