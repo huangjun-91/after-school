@@ -62,7 +62,14 @@
           <option value="ordinary" {% if f_type=='ordinary' %}selected{% endif %}>普通</option>
           <option value="premium" {% if f_type=='premium' %}selected{% endif %}>精品</option>
         </select>
-        {% if f_grade or f_cat or f_type %}
+        <select name="teacher" class="form-select form-select-sm" style="width:auto"
+                onchange="this.form.submit()"
+                title="是否已有授课教师（含教师认领/自建及后台指派）">
+          <option value="">授课：全部</option>
+          <option value="has" {% if f_teacher=='has' %}selected{% endif %}>授课：已有教师</option>
+          <option value="empty" {% if f_teacher=='empty' %}selected{% endif %}>授课：暂无教师（待分配）</option>
+        </select>
+        {% if f_grade or f_cat or f_type or f_teacher %}
           <a href="{{ url_for('admin_dashboard') }}" class="btn btn-sm btn-outline-danger">✕ 清除筛选</a>
         {% endif %}
         <span class="text-muted ms-auto">共 {{ clubs|length }} 个项目</span>
