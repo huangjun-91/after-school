@@ -36,6 +36,47 @@
     {% endfor %}
   {% endwith %}
 
+  <!-- 📥 CSV 批量导入报名 -->
+  <div class="card shadow-sm mb-4">
+    <div class="card-header bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
+      <span>📥 CSV 批量导入报名</span>
+      <a href="{{ url_for('admin_registrations_template') }}" class="btn btn-sm btn-outline-secondary">⬇ 下载 CSV 模板</a>
+    </div>
+    <div class="card-body">
+      <form method="post" action="{{ url_for('admin_registrations_import') }}" enctype="multipart/form-data"
+            class="d-flex align-items-end gap-2 flex-wrap">
+        <div>
+          <label class="form-label small mb-1">选择 CSV 文件（每行：班级名,学生姓名,社团名；首行可为表头）</label>
+          <input type="file" name="file" accept=".csv,text/csv" class="form-control" required>
+        </div>
+        <button class="btn btn-primary">上传并导入</button>
+      </form>
+      <div class="small text-muted mt-2">
+        📌 自动处理：全校去重（一人仅能报一项）、同步进对应班级学生名单、班级不存在或社团未找到会跳过并提示。<br>
+        📌 管理员导入<b>不受"每班 4 人"限制</b>；社团名建议写全（如 <b>三年级篮球</b>），也可只写项目名（如 <b>篮球</b>）自动匹配本年级该项目。编码支持 UTF-8 / GBK。
+      </div>
+    </div>
+  </div>
+
+  <!-- 🏫 班级提交进度（各班主任是否已提交本班报名） -->
+  <div class="card shadow-sm mb-4">
+    <div class="card-header bg-white">🏫 班级提交进度 <span class="text-muted small">（绿色=该班已提交合格报名，灰色=还未提交）</span></div>
+    <div class="card-body py-3">
+      {% for g, group in class_status|groupby('grade') %}
+        <div class="mb-2">
+          <div class="fw-bold small text-muted mb-1">{{ g }}</div>
+          {% for cs in group %}
+            <span class="d-inline-flex align-items-center gap-1 border rounded px-2 py-1 me-1 mb-1 {% if cs['submitted'] %}text-bg-success border-success{% else %}text-bg-light border-secondary{% endif %}">
+              {{ cs['class_name'] }}
+              {% if cs['submitted'] %}✅ 已提交{% else %}⏳ 未提交{% endif %}
+              <span class="small opacity-75">（普通 {{ cs['ord_cnt'] }} 条）</span>
+            </span>
+          {% endfor %}
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+
   <div class="card shadow-sm">
     <div class="card-header bg-white d-flex justify-content-between align-items-center flex-wrap gap-2">
       <span>报名记录（{{ rows|length }}）</span>
@@ -57,6 +98,26 @@
         <a href="{{ url_for('admin_export') }}" class="btn btn-sm btn-outline-primary">导出CSV</a>
       </div>
     </div>
+    <div class="card-body py-2 border-bottom bg-light d-flex align-items-center gap-2 flex-wrap">
+      <!-- 筛选（客户端即时过滤，不影响勾选与批量审核） -->
+      <span class="small text-muted">🔍 筛选：</span>
+      <select id="filtStatus" class="form-select form-select-sm" style="width:auto" onchange="applyFilter()">
+        <option value="">全部状态</option>
+        <option value="pending">待审核</option>
+        <option value="approved">已通过</option>
+        <option value="rejected">已拒绝</option>
+      </select>
+      <select id="filtGrade" class="form-select form-select-sm" style="width:auto" onchange="applyFilter()">
+        <option value="">全部年级</option>
+        {% for g in rows|map(attribute='grade')|unique %}
+          <option value="{{ g }}">{{ g }}</option>
+        {% endfor %}
+      </select>
+      <input type="text" id="filtText" class="form-control form-control-sm" style="width:220px"
+             placeholder="搜索班级 / 学生 / 社团" oninput="applyFilter()">
+      <button class="btn btn-sm btn-outline-secondary" onclick="document.getElementById('filtStatus').value='';document.getElementById('filtGrade').value='';document.getElementById('filtText').value='';applyFilter()">重置</button>
+      <span class="small text-muted" id="filtCount"></span>
+    </div>
     <div class="card-body py-2 border-bottom bg-light">
       <!-- 批量审核选中的记录 -->
       <form method="post" action="{{ url_for('admin_registrations_batch') }}" class="d-flex align-items-center gap-2 flex-wrap">
@@ -75,7 +136,7 @@
         </tr></thead>
         <tbody>
           {% for r in rows %}
-          <tr>
+          <tr data-status="{{ r['status'] }}" data-grade="{{ r['grade'] }}">
             <td class="text-center"><input type="checkbox" class="reg-check" value="{{ r['id'] }}" name="rids" form="batchForm"></td>
             <td>{{ r['class_name'] }}</td>
             <td>{{ r['student_name'] }}</td>
@@ -114,6 +175,28 @@
   function toggleAll(master) {
     document.querySelectorAll('.reg-check').forEach(function(cb){ cb.checked = master.checked; });
   }
+  function applyFilter() {
+    var st = document.getElementById('filtStatus').value;
+    var gr = document.getElementById('filtGrade').value;
+    var tx = (document.getElementById('filtText').value || '').trim().toLowerCase();
+    var rows = document.querySelectorAll('#regTable tbody tr');
+    var vis = 0;
+    rows.forEach(function(tr){
+      var show = true;
+      if (st && tr.getAttribute('data-status') !== st) show = false;
+      if (show && gr && tr.getAttribute('data-grade') !== gr) show = false;
+      if (show && tx) {
+        var hay = tr.textContent.toLowerCase();
+        var ok = tx.split(/\s+/).every(function(k){ return hay.indexOf(k) !== -1; });
+        if (!ok) show = false;
+      }
+      tr.style.display = show ? '' : 'none';
+      if (show) vis++;
+    });
+    var c = document.getElementById('filtCount');
+    if (c) c.textContent = '显示 ' + vis + ' / ' + rows.length + ' 条';
+  }
+  applyFilter();
 </script>
 </body>
 </html>
