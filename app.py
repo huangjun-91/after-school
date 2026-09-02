@@ -1431,6 +1431,22 @@ def admin_club_delete(cid):
     return redirect(url_for('admin_dashboard'))
 
 
+# 低报名人数社团：管理员决定"确认保留"(keep) 或 "关闭"(close)
+@app.route('/admin/lowcount/<int:cid>/<action>', methods=['POST'])
+def admin_lowcount(cid, action):
+    if not session.get('role') == 'admin':
+        return redirect(url_for('login'))
+    db = get_db()
+    if action == 'keep':
+        # 标记为保留（不关闭），仅提示
+        flash('已确认保留该社团（报名继续开放）', 'success')
+    elif action == 'close':
+        db.execute("UPDATE clubs SET is_active=0 WHERE id=?", (cid,))
+        db.commit()
+        flash('该社团已关闭（学生需重新选择）', 'success')
+    return redirect(url_for('admin_dashboard'))
+
+
 # 社团 CSV 批量导入（名称,类型,年级,教师,地点,时间,人数上限,简介）
 @app.route('/admin/clubs/import', methods=['POST'])
 def admin_clubs_import():
