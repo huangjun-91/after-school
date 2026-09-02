@@ -36,6 +36,40 @@
     {% endfor %}
   {% endwith %}
 
+  <!-- 页面上方常驻筛选：勾选年级/分类/类型后仅显示符合的项目 -->
+  <div class="card shadow-sm mb-3">
+    <form method="get" action="{{ url_for('admin_dashboard') }}" class="card-body py-2">
+      <div class="d-flex flex-wrap align-items-center gap-2 small">
+        <span class="fw-bold">🔍 筛选项目：</span>
+        <select name="grade" class="form-select form-select-sm" style="width:auto"
+                onchange="this.form.submit()">
+          <option value="">全部年级</option>
+          <option value="all" {% if f_grade=='all' %}selected{% endif %}>精品（全校）</option>
+          {% for g in GRADES %}
+            <option value="{{ g }}" {% if f_grade==g %}selected{% endif %}>{{ g }}</option>
+          {% endfor %}
+        </select>
+        <select name="category" class="form-select form-select-sm" style="width:auto"
+                onchange="this.form.submit()">
+          <option value="">全部分类</option>
+          {% for cat in CATEGORIES %}
+            <option value="{{ cat }}" {% if f_cat==cat %}selected{% endif %}>{{ cat }}</option>
+          {% endfor %}
+        </select>
+        <select name="type" class="form-select form-select-sm" style="width:auto"
+                onchange="this.form.submit()">
+          <option value="">全部类型</option>
+          <option value="ordinary" {% if f_type=='ordinary' %}selected{% endif %}>普通</option>
+          <option value="premium" {% if f_type=='premium' %}selected{% endif %}>精品</option>
+        </select>
+        {% if f_grade or f_cat or f_type %}
+          <a href="{{ url_for('admin_dashboard') }}" class="btn btn-sm btn-outline-danger">✕ 清除筛选</a>
+        {% endif %}
+        <span class="text-muted ms-auto">共 {{ clubs|length }} 个项目</span>
+      </div>
+    </form>
+  </div>
+
   <div class="row">
     <!-- 创建社团 -->
     <div class="col-md-4 mb-4">
@@ -125,37 +159,6 @@
           ✅ 勾选多个社团 → 点下方「批量修改」可统一更新它们的类型、年级、分类、教师、地点、时间、简介。<br>
           🔄 也可以：勾选多个社团 → 点其中<b>任意一个</b>的「编辑」并修改保存 → 改动的字段会自动同步到其他勾选社团（名称除外）。
         </div>
-        <!-- 筛选：勾选年级/分类/类型后仅显示符合的项目 -->
-        <form method="get" action="{{ url_for('admin_dashboard') }}" class="card-body py-2 border-bottom bg-light">
-          <div class="d-flex flex-wrap align-items-center gap-2 small">
-            <span><b>🔍 筛选：</b></span>
-            <select name="grade" class="form-select form-select-sm" style="width:auto"
-                    onchange="this.form.submit()">
-              <option value="">全部年级</option>
-              <option value="all" {% if f_grade=='all' %}selected{% endif %}>精品（全校）</option>
-              {% for g in GRADES %}
-                <option value="{{ g }}" {% if f_grade==g %}selected{% endif %}>{{ g }}</option>
-              {% endfor %}
-            </select>
-            <select name="category" class="form-select form-select-sm" style="width:auto"
-                    onchange="this.form.submit()">
-              <option value="">全部分类</option>
-              {% for cat in CATEGORIES %}
-                <option value="{{ cat }}" {% if f_cat==cat %}selected{% endif %}>{{ cat }}</option>
-              {% endfor %}
-            </select>
-            <select name="type" class="form-select form-select-sm" style="width:auto"
-                    onchange="this.form.submit()">
-              <option value="">全部类型</option>
-              <option value="ordinary" {% if f_type=='ordinary' %}selected{% endif %}>普通</option>
-              <option value="premium" {% if f_type=='premium' %}selected{% endif %}>精品</option>
-            </select>
-            {% if f_grade or f_cat or f_type %}
-              <a href="{{ url_for('admin_dashboard') }}" class="btn btn-sm btn-outline-danger">✕ 清除筛选</a>
-            {% endif %}
-            <span class="text-muted">共 {{ clubs|length }} 个项目</span>
-          </div>
-        </form>
         <div class="table-responsive">
           <table class="table table-sm align-middle mb-0">
             <thead><tr>
