@@ -42,6 +42,12 @@ MAX_STUDENTS_ORDINARY = 32
 MAX_STUDENTS_PREMIUM = 30
 MAX_STUDENTS_DEFAULT = 30
 
+# ----- 班级填报配额规则 -----
+# 普通项目：每个班对该项目需填报 2~4 名学生（不足2不能提交；超出4当下拦截）
+# 精品项目：每个班不强制填报、不限每班人数（自愿/全校自由报名）
+PERCLASS_MIN_EXTRA = 2      # 每班每普通项目最少填报人数
+PERCLASS_MAX_EXTRA = 4      # 每班每普通项目最多填报人数
+
 # 普通社团项目模板：分类 -> 项目名列表
 ORDINARY_PROJECTS = {
     '体育': ['足球', '篮球', '羽毛球', '乒乓球', '跳绳'],
@@ -150,6 +156,15 @@ def init_db():
         status TEXT DEFAULT 'pending',   -- pending 待审核 / approved 已通过 / rejected 已拒绝
         created_at TEXT DEFAULT (datetime('now','localtime')),
         FOREIGN KEY (club_id) REFERENCES clubs(id),
+        FOREIGN KEY (class_id) REFERENCES class_accounts(id)
+    );
+
+    -- 班级报名提交记录：班主任填齐后点"提交本班报名"才生成。
+    -- 只有已提交的班级，其报名记录才算进入管理员审核范围。
+    CREATE TABLE IF NOT EXISTS class_submissions (
+        class_id INTEGER PRIMARY KEY,
+        grade TEXT NOT NULL,
+        submitted_at TEXT DEFAULT (datetime('now','localtime')),
         FOREIGN KEY (class_id) REFERENCES class_accounts(id)
     );
 
@@ -297,6 +312,49 @@ def count_registrations(db, club_id, status=None):
     return cur.fetchone()[0]
 
 
+def count_class_club(db, class_id, club_id):
+    """该班级在某项目的报名人数（不含已拒绝）。"""
+    cur = db.execute(
+        "SELECT COUNT(*) FROM registrations WHERE class_id=? AND club_id=? AND status != 'rejected'",
+        (class_id, club_id))
+    return cur.fetchone()[0]
+
+
+def class_fill_progress(db, class_id, grade):
+    """返回班主任端"班级填报进度"数据。
+
+    只统计本班该年级【当前开放】的普通项目（精品全校自愿不强制）。
+    每项返回 dict: club_id, name, category, count, state
+      state: ok=人数2-4 合格 / short=不足2 / excess=超过4 / none=暂无本班学生
+    """
+    clubs = db.execute('''
+        SELECT id, name, category FROM clubs
+        WHERE is_active=1 AND type='ordinary' AND grade=?
+        ORDER BY id
+    ''', (grade,)).fetchall()
+    items = []
+    for c in clubs:
+        cnt = count_class_club(db, class_id, c['id'])
+        # 状态：0=未填报(灰)；1=不足2(灰)；2-4=合格(绿)；>4=超限(红,仅管理员导入可能出现)
+        if cnt == 0:
+            state = 'none'
+        elif cnt < PERCLASS_MIN_EXTRA:
+            state = 'short'
+        elif cnt <= PERCLASS_MAX_EXTRA:
+            state = 'ok'
+        else:
+            state = 'excess'
+        items.append({'club_id': c['id'], 'name': c['name'],
+                      'category': c['category'], 'count': cnt, 'state': state})
+    return items
+
+
+def class_submittable(items):
+    """班级能否提交：所有开放普通项目都满足 2~4 人。返回 (ok, 未达标项列表)。"""
+    bad = [it for it in items if it['state'] != 'ok']
+    return (len(bad) == 0), bad
+
+
 def validate_max_students(ctype, value):
     """校验并返回人数上限：普通社团 15-32，精品社团 10-30。
     返回 (ok, max_students 或 None)"""
@@ -394,14 +452,22 @@ def teacher_dashboard():
         ORDER BY type DESC, id
     ''', (grade,)).fetchall()
 
-    # 每个社团的报名人数与状态
+    # 每个社团的报名人数与状态（全校维度 + 本班维度）
     club_info = {}
     for c in clubs:
         cnt = count_registrations(db, c['id'])
+        class_cnt = count_class_club(db, class_id, c['id'])
         club_info[c['id']] = {
             'count': cnt,
+            'class_count': class_cnt,
             'full': cnt >= c['max_students'],
+            # 普通项目：本班是否已达每班上限（>不能再加）
+            'class_full': (c['type'] == 'ordinary') and (class_cnt >= PERCLASS_MAX_EXTRA),
         }
+
+    # 班级填报进度：本班当前开放普通项目的人数达标情况（决定能否提交）
+    fill_items = class_fill_progress(db, class_id, grade)
+    submittable, bad_items = class_submittable(fill_items)
 
     # 本班学生名单（管理员批量导入的）
     students = db.execute('''
@@ -414,10 +480,19 @@ def teacher_dashboard():
     # 本班任课教师/上课地点/上课时间（由 CSV 导入时填写）
     cls = db.execute("SELECT * FROM class_accounts WHERE id=?", (class_id,)).fetchone()
 
+    # 本班是否已成功提交（进入待管理员审核）
+    sub = db.execute("SELECT submitted_at FROM class_submissions WHERE class_id=?",
+                     (class_id,)).fetchone()
+    cls_submitted = bool(sub)
+
     return render_template('teacher.html', regs=regs, clubs=clubs,
+                           cls_submitted=cls_submitted,
                            club_info=club_info, grade=grade,
                            class_name=session['class_name'], students=students,
-                           cls=cls)
+                           cls=cls, fill_items=fill_items,
+                           submittable=submittable, bad_items=bad_items,
+                           PERCLASS_MIN_EXTRA=PERCLASS_MIN_EXTRA,
+                           PERCLASS_MAX_EXTRA=PERCLASS_MAX_EXTRA)
 
 
 @app.route('/teacher/submit', methods=['POST'])
@@ -452,11 +527,18 @@ def teacher_submit():
         flash(f'学生 "{student_name}" 已经报名过了，一个学生只能报一个社团', 'danger')
         return redirect(url_for('teacher_dashboard'))
 
-    # 人数上限检查
+    # 人数上限检查（全校级：每社团人数上限）
     cnt = count_registrations(db, club['id'])
     if cnt >= club['max_students']:
         flash(f'该社团已满员（{club["max_students"]}人），不能再报名', 'danger')
         return redirect(url_for('teacher_dashboard'))
+
+    # 班级填报配额检查：普通项目每个班最多 PERCLASS_MAX_EXTRA 人（当下拦截第 5 个）
+    if club['type'] == 'ordinary':
+        class_cnt = count_class_club(db, session['class_id'], club['id'])
+        if class_cnt >= PERCLASS_MAX_EXTRA:
+            flash(f'本班在「{club["name"]}」已达上限 {PERCLASS_MAX_EXTRA} 人，不能再为本班添加该项目的学生', 'danger')
+            return redirect(url_for('teacher_dashboard'))
 
     db.execute('''
         INSERT INTO registrations (club_id, class_id, student_name, grade, status)
@@ -476,6 +558,39 @@ def teacher_remove(rid):
                (rid, session['class_id']))
     db.commit()
     flash('已撤销该报名', 'success')
+    return redirect(url_for('teacher_dashboard'))
+
+
+@app.route('/teacher/submit-class', methods=['POST'])
+def teacher_submit_class():
+    """班主任点「提交本班报名」：校验本班开放普通项目是否全部达标(每项2-4人)。
+    达标=生成/更新提交记录(进入待管理员审核)；不达标=打回并列出缺项。"""
+    if not session.get('role') == 'teacher':
+        return redirect(url_for('login'))
+    db = get_db()
+    class_id = session['class_id']
+    grade = session['grade']
+    items = class_fill_progress(db, class_id, grade)
+    ok, bad = class_submittable(items)
+    failcount = len([it for it in items if it['state'] == 'none' or it['state'] == 'short'])
+    if not ok:
+        detail = []
+        for it in bad:
+            label = ('未填报' if it['count'] == 0
+                     else '不足2人' if it['state'] == 'short'
+                     else '超过4人')
+            detail.append(f'「{it["name"]}」当前 {it["count"]} 人（{label}）')
+        flash(f'提交未通过：以下 {len(bad)} 个项目未达标，请补齐后再提交。' + '；'.join(detail), 'danger')
+        return redirect(url_for('teacher_dashboard'))
+    # 达标：记录提交
+    db.execute('''
+        INSERT INTO class_submissions (class_id, grade, submitted_at)
+        VALUES (?, ?, datetime('now','localtime'))
+        ON CONFLICT(class_id) DO UPDATE SET submitted_at=datetime('now','localtime'), grade=excluded.grade
+    ''', (class_id, grade))
+    db.commit()
+    flash('✅ 本班报名提交成功！共覆盖 %d 个开放普通项目（每项 %d-%d 人），已进入管理员审核。'
+          % (len(items), PERCLASS_MIN_EXTRA, PERCLASS_MAX_EXTRA), 'success')
     return redirect(url_for('teacher_dashboard'))
 
 
@@ -1791,15 +1906,30 @@ def admin_registrations():
     if not session.get('role') == 'admin':
         return redirect(url_for('login'))
     db = get_db()
+    # 班级提交状态（看哪些班已提交合格、哪些还没提交）
+    class_status = db.execute('''
+        SELECT a.id AS class_id, a.class_name, a.grade,
+               (s.submitted_at IS NOT NULL) AS submitted,
+               s.submitted_at,
+               (SELECT COUNT(*) FROM registrations r JOIN clubs c ON r.club_id=c.id
+                 WHERE r.class_id=a.id AND r.status != 'rejected'
+                       AND c.type='ordinary' AND c.grade=a.grade AND c.is_active=1) AS ord_cnt
+        FROM class_accounts a
+        LEFT JOIN class_submissions s ON s.class_id = a.id
+        ORDER BY a.grade, a.id
+    ''').fetchall()
+
     rows = db.execute('''
         SELECT r.*, c.name AS club_name, c.type AS club_type, c.grade AS club_grade,
-               a.class_name
+               a.class_name,
+               (SELECT count(*) FROM class_submissions cs WHERE cs.class_id = r.class_id) AS cls_submitted
         FROM registrations r
         JOIN clubs c ON r.club_id = c.id
         JOIN class_accounts a ON r.class_id = a.id
         ORDER BY r.id DESC
     ''').fetchall()
-    return render_template('admin_registrations.html', rows=rows, MIN_STUDENTS=MIN_STUDENTS)
+    return render_template('admin_registrations.html', rows=rows, MIN_STUDENTS=MIN_STUDENTS,
+                           class_status=class_status)
 
 
 @app.route('/admin/registration/status/<int:rid>/<status>', methods=['POST'])
@@ -1845,20 +1975,165 @@ def admin_registrations_batch():
     return redirect(url_for('admin_registrations'))
 
 
-# 不足15人的社团处理：管理员决定继续/关闭
-@app.route('/admin/lowcount/<int:cid>/<action>', methods=['POST'])
-def admin_lowcount(cid, action):
+# ---------- 管理员：CSV 批量导入报名（班主任端/社团批量补录） ----------
+# CSV 每行：班级名,学生姓名,社团名（首行可为表头：班级,学生,社团）
+# 规则：全校查重（一个学生只能报一项，已报其它项则跳过提示）；
+#       管理员导入不受"每班≤4"限制；导入后同步进该班学生名单。
+
+
+def _find_club_for_import(db, club_cell, grade):
+    """按社团名匹配。先精确匹配 clubs.name；匹配不到则视为项目名，按 年级+项目 匹配。"""
+    club_cell = (club_cell or '').strip()
+    if not club_cell:
+        return None
+    r = db.execute("SELECT id FROM clubs WHERE name=? AND is_active=1", (club_cell,)).fetchone()
+    if r:
+        return r['id']
+    # 当作项目名：目标名 = 年级 + 项目（去掉可能的"年级"前缀再拼一次）
+    cleaned = club_cell
+    for g in GRADES:
+        if cleaned.startswith(g):
+            cleaned = cleaned[len(g):]
+            break
+    r = db.execute("SELECT id FROM clubs WHERE grade=? AND name=? AND type='ordinary' AND is_active=1",
+                   (grade, f'{grade}{cleaned}')).fetchone()
+    return r['id'] if r else None
+
+
+@app.route('/admin/registrations/import', methods=['POST'])
+def admin_registrations_import():
     if not session.get('role') == 'admin':
         return redirect(url_for('login'))
     db = get_db()
-    if action == 'keep':
-        # 标记为保留（不关闭），仅提示
-        flash('已确认保留该社团（报名继续开放）', 'success')
-    elif action == 'close':
-        db.execute("UPDATE clubs SET is_active=0 WHERE id=?", (cid,))
-        db.commit()
-        flash('该社团已关闭（学生需重新选择）', 'success')
-    return redirect(url_for('admin_dashboard'))
+    file = request.files.get('file')
+    if not file or not file.filename:
+        flash('请选择 CSV 文件', 'danger')
+        return redirect(url_for('admin_registrations'))
+    raw = file.read()
+    text = None
+    for enc in ('utf-8-sig', 'utf-8', 'gbk'):
+        try:
+            text = raw.decode(enc)
+            break
+        except UnicodeDecodeError:
+            continue
+    if text is None:
+        flash('无法识别文件编码（支持 UTF-8 / GBK）', 'danger')
+        return redirect(url_for('admin_registrations'))
+
+    imported = 0
+    skip_dup = 0
+    skip_noclass = 0
+    skip_noclub = 0
+    skip_disabled = 0
+    entries = []
+    try:
+        reader = csv.reader(io.StringIO(text))
+        header_pos = {'class': 0, 'name': 1, 'club': 2}  # 默认：班级名,学生姓名,社团名
+        first = True
+        for row in reader:
+            if not row:
+                continue
+            cols = [p for p in ((row[0].split(',') if len(row) == 1 else row))]
+            cols = [c.strip() for c in cols]
+            if first:
+                first = False
+                joined = ''.join(cols)
+                # 表头识别（若首行含关键字）
+                if any(k in joined for k in ('班级', '学生', '姓名', '社团', '项目', 'class', 'name', 'club')):
+                    def _idx(kws, default):
+                        for i, c in enumerate(cols[:6]):
+                            if any(k == c or k in c for k in kws):
+                                return i
+                        return default
+                    header_pos = {
+                        'class': _idx(['班级名', '班级', 'class', 'Class'], 0),
+                        'name': _idx(['学生姓名', '姓名', '学生', '名字', 'name'], 1),
+                        'club': _idx(['社团名', '社团', '项目', 'club', 'course'], 2),
+                    }
+                    continue
+            data = cols  # 无表头：直接按顺序, 班级名,学生姓名,社团名
+            cls_cell = (data[header_pos['class']] if len(data) > header_pos['class'] else '')
+            name_cell = (data[header_pos['name']] if len(data) > header_pos['name'] else '')
+            club_cell = (data[header_pos['club']] if len(data) > header_pos['club'] else '')
+            if not (cls_cell and name_cell and club_cell):
+                continue
+            entries.append((cls_cell, name_cell, club_cell))
+
+        # 预取：班级按班名、已报学生集合（全校一个学生只能报一项）
+        class_by_name = {r['class_name']: r for r in
+                         db.execute("SELECT id, class_name, grade FROM class_accounts").fetchall()}
+        for cls_cell, name_cell, club_cell in entries:
+            clazz = class_by_name.get(cls_cell)
+            if not clazz:
+                skip_noclass += 1
+                continue
+            class_id = clazz['id']
+            cid = _find_club_for_import(db, club_cell, clazz['grade'])
+            if not cid:
+                skip_noclub += 1
+                continue
+            club = db.execute("SELECT * FROM clubs WHERE id=? AND is_active=1", (cid,)).fetchone()
+            if not club:
+                skip_disabled += 1
+                continue
+            # 该生是否已报其它项目（全校查重）
+            already = db.execute('''
+                SELECT COUNT(*) FROM registrations
+                WHERE student_name=? AND class_id=? AND status != 'rejected'
+            ''', (name_cell, class_id)).fetchone()[0]
+            if already:
+                skip_dup += 1
+                continue
+            # 避免文件内/库里同校同生重复（同班同名同一项目）
+            dup2 = db.execute('''
+                SELECT COUNT(*) FROM registrations
+                WHERE club_id=? AND class_id=? AND student_name=? AND status != 'rejected'
+            ''', (cid, class_id, name_cell)).fetchone()[0]
+            if dup2:
+                skip_dup += 1
+                continue
+            db.execute('''
+                INSERT INTO registrations (club_id, class_id, student_name, grade, status, created_at)
+                VALUES (?,?,?,?, 'pending', datetime('now','localtime'))
+            ''', (cid, class_id, name_cell, clazz['grade']))
+            # 同步进该班学生名单（若无则补录）
+            db.execute('INSERT OR IGNORE INTO students (class_id, student_name) VALUES (?,?)',
+                       (class_id, name_cell))
+            imported += 1
+    except Exception as e:
+        db.rollback()
+        flash(f'导入失败：{str(e)}', 'danger')
+        return redirect(url_for('admin_registrations'))
+
+    db.commit()
+    if imported:
+        flash(f'CSV 成功导入 {imported} 条报名记录（已同步进对应班级名单）', 'success')
+    if skip_dup:
+        flash(f'{skip_dup} 条因学生已报其它项目(一人只能报一项)被跳过', 'warning')
+    if skip_noclass:
+        flash(f'{skip_noclass} 条因班级不存在被跳过（请检查班级名）', 'warning')
+    if skip_noclub:
+        flash(f'{skip_noclub} 条因社团未找到被跳过', 'warning')
+    if skip_disabled:
+        flash(f'{skip_disabled} 条因社团已停用被跳过', 'warning')
+    if imported == 0 and not (skip_dup or skip_noclass or skip_noclub or skip_disabled):
+        flash('CSV 中没有可导入的记录', 'warning')
+    return redirect(url_for('admin_registrations'))
+
+
+@app.route('/admin/registrations/template')
+def admin_registrations_template():
+    if not session.get('role') == 'admin':
+        return redirect(url_for('login'))
+    data = ('班级名,学生姓名,社团名\n'
+            '三年级1班,张三,三年级篮球\n'
+            '三年级1班,李四,三年级足球\n'
+            '一年级5班,王五,一年级跳绳\n').encode('utf-8-sig')
+    resp = make_response(data)
+    resp.headers['Content-Type'] = 'text/csv; charset=utf-8'
+    resp.headers['Content-Disposition'] = 'attachment; filename="registrations_import_template.csv"'
+    return resp
 
 
 # ---------- 管理员：教师账号管理 ----------
