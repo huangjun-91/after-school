@@ -1032,14 +1032,36 @@ def admin_dashboard():
     if not session.get('role') == 'admin':
         return redirect(url_for('login'))
     db = get_db()
-    clubs = db.execute('''
+
+    # 筛选参数（GET，服务端过滤，示例：勾选"一年级"只看一年级的项目）
+    f_grade = request.args.get('grade', '').strip()
+    f_cat = request.args.get('category', '').strip()
+    f_type = request.args.get('type', '').strip()
+    where, params = [], []
+    if f_grade:
+        if f_grade == 'all':
+            where.append("c.type='premium'")
+        elif f_grade in GRADES:
+            where.append("c.grade=?")
+            params.append(f_grade)
+    if f_cat in CATEGORIES:
+        where.append("c.category=?")
+        params.append(f_cat)
+    if f_type == 'ordinary':
+        where.append("c.type='ordinary'")
+    elif f_type == 'premium':
+        where.append("c.type='premium'")
+    sql_where = ('WHERE ' + ' AND '.join(where)) if where else ''
+
+    clubs = db.execute(f'''
         SELECT c.*,
           (SELECT COUNT(*) FROM registrations r WHERE r.club_id=c.id AND r.status IN ('pending','approved')) AS cnt
-        FROM clubs c ORDER BY c.type DESC, c.id
-    ''').fetchall()
+        FROM clubs c {sql_where} ORDER BY c.type DESC, c.id
+    ''', params).fetchall()
     low_count = [c for c in clubs if c['cnt'] < MIN_STUDENTS]
     return render_template('admin.html', clubs=clubs, low_count=low_count,
-                           MIN_STUDENTS=MIN_STUDENTS, GRADES=GRADES, CATEGORIES=CATEGORIES)
+                           MIN_STUDENTS=MIN_STUDENTS, GRADES=GRADES, CATEGORIES=CATEGORIES,
+                           f_grade=f_grade, f_cat=f_cat, f_type=f_type)
 
 
 @app.route('/admin/club/create', methods=['POST'])
