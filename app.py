@@ -2509,6 +2509,22 @@ def _pinyin_short(cls_name):
 init_db()
 
 
+# ===== 临时迁移用：导出整个 SQLite 数据库文件（管理员下载，迁移到阿里云后删除） =====
+@app.route('/admin/export-db')
+def admin_export_db():
+    """管理员下载完整 afterschool.db（供迁移到新服务器用）。
+    【临时端点】迁移完成后必须删除，避免泄露数据库。"""
+    if not session.get('role') == 'admin':
+        return redirect(url_for('login'))
+    from flask import send_file
+    if not os.path.exists(DB_PATH):
+        flash('数据库文件不存在', 'danger')
+        return redirect(url_for('admin_dashboard'))
+    return send_file(DB_PATH, as_attachment=True,
+                     download_name='afterschool.db',
+                     mimetype='application/octet-stream')
+
+
 # ---------- 全局错误日志（定位线上 500） ----------
 @app.errorhandler(Exception)
 def handle_exception(e):
