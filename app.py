@@ -2509,20 +2509,38 @@ def _pinyin_short(cls_name):
 init_db()
 
 
-# ===== 临时迁移用：导出整个 SQLite 数据库文件（管理员下载，迁移到阿里云后删除） =====
+# ===== 临时迁移用：以 base64 分块文本输出数据库（绕开文件下载，供逐段抓取） =====
+# 用法：/admin/export-db?part=N 返回第 N 块（每块约 CHUNK 字节的 base64 文本），
+#       /admin/export-db?meta=1 返回总块数等信息。
+#       【临时端点】迁移完成后必须删除。
+CHUNK = 20000  # 每块 base64 字符数
+
 @app.route('/admin/export-db')
 def admin_export_db():
-    """管理员下载完整 afterschool.db（供迁移到新服务器用）。
-    【临时端点】迁移完成后必须删除，避免泄露数据库。"""
     if not session.get('role') == 'admin':
         return redirect(url_for('login'))
-    from flask import send_file
+    import base64 as _b64
     if not os.path.exists(DB_PATH):
-        flash('数据库文件不存在', 'danger')
-        return redirect(url_for('admin_dashboard'))
-    return send_file(DB_PATH, as_attachment=True,
-                     download_name='afterschool.db',
-                     mimetype='application/octet-stream')
+        return 'NO_DB_FILE'
+    raw = open(DB_PATH, 'rb').read()
+    b64 = _b64.b64encode(raw).decode('ascii')
+    total = (len(b64) + CHUNK - 1) // CHUNK
+
+    if request.args.get('meta') == '1':
+        return ('DB_META db_bytes=%d b64_len=%d total_parts=%d chunk=%d md5=%s'
+                % (len(raw), len(b64), total, CHUNK,
+                   __import__('hashlib').md5(raw).hexdigest()))
+
+    try:
+        part = int(request.args.get('part', '0'))
+    except ValueError:
+        part = 0
+    if part < 0 or part >= total:
+        return 'PART_OUT_OF_RANGE total=%d' % total
+    seg = b64[part * CHUNK:(part + 1) * CHUNK]
+    resp = make_response('SEG_%d_OF_%d\n%s\nSEG_END' % (part, total, seg))
+    resp.headers['Content-Type'] = 'text/plain; charset=utf-8'
+    return resp
 
 
 # ---------- 全局错误日志（定位线上 500） ----------
