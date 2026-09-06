@@ -2226,21 +2226,37 @@ def admin_teachers():
     if not session.get('role') == 'admin':
         return redirect(url_for('login'))
     db = get_db()
-    teachers = db.execute('''
-        SELECT t.*,
-          (SELECT COUNT(*) FROM teacher_clubs tc WHERE tc.teacher_id=t.id) AS club_count
-        FROM teachers t ORDER BY t.id
-    ''').fetchall()
-    # 每个教师任教的社团名
+    # 搜索：按姓名或账号模糊匹配（用于快速定位某教师的任教情况）
+    q = request.args.get('q', '').strip()
+    if q:
+        kw = f'%{q}%'
+        teachers = db.execute('''
+            SELECT t.*,
+              (SELECT COUNT(*) FROM teacher_clubs tc WHERE tc.teacher_id=t.id) AS club_count
+            FROM teachers t
+            WHERE t.name LIKE ? OR t.username LIKE ?
+            ORDER BY t.id
+        ''', (kw, kw)).fetchall()
+    else:
+        teachers = db.execute('''
+            SELECT t.*,
+              (SELECT COUNT(*) FROM teacher_clubs tc WHERE tc.teacher_id=t.id) AS club_count
+            FROM teachers t ORDER BY t.id
+        ''').fetchall()
+    # 每个教师任教的社团（含地点/时间/学生数，供"任教情况"详情查看）
     teacher_clubs_map = {}
     for t in teachers:
         clubs = db.execute('''
-            SELECT c.name, c.type FROM teacher_clubs tc JOIN clubs c ON tc.club_id=c.id
+            SELECT c.id, c.name, c.type, c.grade, c.category,
+                   c.location, c.schedule, c.teacher, c.is_active, c.max_students,
+                   (SELECT COUNT(*) FROM registrations r
+                     WHERE r.club_id=c.id AND r.status IN ('pending','approved')) AS cnt
+            FROM teacher_clubs tc JOIN clubs c ON tc.club_id=c.id
             WHERE tc.teacher_id=? ORDER BY c.id
         ''', (t['id'],)).fetchall()
         teacher_clubs_map[t['id']] = clubs
     return render_template('admin_teachers.html', teachers=teachers,
-                           teacher_clubs_map=teacher_clubs_map)
+                           teacher_clubs_map=teacher_clubs_map, q=q)
 
 
 # 创建教师账号
