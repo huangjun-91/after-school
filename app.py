@@ -350,8 +350,13 @@ def class_fill_progress(db, class_id, grade):
 
 
 def class_submittable(items):
-    """班级能否提交：所有开放普通项目都满足 2~4 人。返回 (ok, 未达标项列表)。"""
-    bad = [it for it in items if it['state'] != 'ok']
+    """班级能否提交：只要求每个开放普通项目都达最低人数（≥ PERCLASS_MIN_EXTRA）。
+
+    说明：每班每普通项目上限 PERCLASS_MAX_EXTRA(4) 针对班主任手动填报；管理员 CSV
+    导入不受此限，个别班某项目可能因此 >4 人。这种情况班内已满足、无法由班主任削减，
+    不应阻碍提交——故只看是否达最低 2 人（0 或缺人则需补足），超限(excess)不拦截。
+    返回 (ok, 未达标项列表[仅 不足2人/未填])。"""
+    bad = [it for it in items if it['state'] in ('none', 'short')]
     return (len(bad) == 0), bad
 
 
@@ -563,8 +568,9 @@ def teacher_remove(rid):
 
 @app.route('/teacher/submit-class', methods=['POST'])
 def teacher_submit_class():
-    """班主任点「提交本班报名」：校验本班开放普通项目是否全部达标(每项2-4人)。
-    达标=生成/更新提交记录(进入待管理员审核)；不达标=打回并列出缺项。"""
+    """班主任点「提交本班报名」：校验本班开放普通项目是否都达到最低人数(≥2)。
+    达标=生成/更新提交记录(进入待管理员审核)；不达标(未填或不足2人)=打回并列出缺项。
+    注：管理员导入可致某班某项目>4人(超限)，属已满足、不阻碍提交。"""
     if not session.get('role') == 'teacher':
         return redirect(url_for('login'))
     db = get_db()
@@ -572,15 +578,13 @@ def teacher_submit_class():
     grade = session['grade']
     items = class_fill_progress(db, class_id, grade)
     ok, bad = class_submittable(items)
-    failcount = len([it for it in items if it['state'] == 'none' or it['state'] == 'short'])
     if not ok:
         detail = []
         for it in bad:
-            label = ('未填报' if it['count'] == 0
-                     else '不足2人' if it['state'] == 'short'
-                     else '超过4人')
-            detail.append(f'「{it["name"]}」当前 {it["count"]} 人（{label}）')
-        flash(f'提交未通过：以下 {len(bad)} 个项目未达标，请补齐后再提交。' + '；'.join(detail), 'danger')
+            label = ('未填报' if it['count'] == 0 else '不足 %d 人' % PERCLASS_MIN_EXTRA)
+            detail.append('「%s」当前 %d 人（%s）' % (it['name'], it['count'], label))
+        flash('提交未通过：以下 %d 个项目未填报或不足人数，请补齐后再提交。%s'
+              % (len(bad), '；'.join(detail)), 'danger')
         return redirect(url_for('teacher_dashboard'))
     # 达标：记录提交
     db.execute('''
@@ -589,8 +593,8 @@ def teacher_submit_class():
         ON CONFLICT(class_id) DO UPDATE SET submitted_at=datetime('now','localtime'), grade=excluded.grade
     ''', (class_id, grade))
     db.commit()
-    flash('✅ 本班报名提交成功！共覆盖 %d 个开放普通项目（每项 %d-%d 人），已进入管理员审核。'
-          % (len(items), PERCLASS_MIN_EXTRA, PERCLASS_MAX_EXTRA), 'success')
+    flash('✅ 本班报名提交成功！共覆盖 %d 个开放普通项目（每项不少于 %d 人），已进入管理员审核。'
+          % (len(items), PERCLASS_MIN_EXTRA), 'success')
     return redirect(url_for('teacher_dashboard'))
 
 
