@@ -2338,6 +2338,74 @@ def admin_teacher_delete(tid):
     return redirect(url_for('admin_teachers'))
 
 
+# 导出教师任教信息（任教课程/学科、授课地点、上课时间、任教学生、授课班级）
+# 口径：以 teacher_clubs 任教关联为准，每位教师任教的每个社团导出一行；
+#       学生在全校报名 approved(已通过) 中取；无人任教社团不导出。
+@app.route('/admin/teachers/export')
+def admin_teachers_export():
+    if not session.get('role') == 'admin':
+        return redirect(url_for('login'))
+    db = get_db()
+
+    def _type_label(t):
+        return '精品' if t == 'premium' else '普通'
+
+    def _club_grade_label(c_type, c_grade):
+        return '全校' if c_type == 'premium' else (c_grade or '')
+
+    def _category_label(cat):
+        # clubs.category 存的是分类名本身（体育/艺术/文化/科技/益智游戏）
+        return cat or ''
+
+    rows = db.execute('''
+        SELECT t.id AS teacher_id, t.name AS teacher_name, t.username,
+               c.id AS club_id, c.name AS club_name, c.type AS club_type,
+               c.grade AS club_grade, c.category, c.location, c.schedule
+        FROM teacher_clubs tc
+        JOIN teachers t ON tc.teacher_id = t.id
+        JOIN clubs c ON tc.club_id = c.id
+        ORDER BY t.id, c.id
+    ''').fetchall()
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(['教师姓名', '教师账号', '任教学科(课程)', '课程类型', '适用年级',
+                     '课程分类', '授课地点', '上课时间', '任教学生数', '授课班级', '任教学生名单'])
+    for r in rows:
+        # 该教师任教的这个社团里，已通过报名的学生（以 club_id 为准）
+        regs2 = db.execute('''
+            SELECT r.student_name, a.class_name
+            FROM registrations r
+            JOIN class_accounts a ON r.class_id = a.id
+            WHERE r.club_id=? AND r.status='approved'
+            ORDER BY a.class_name, r.student_name
+        ''', (r['club_id'],)).fetchall()
+        students = []
+        classes = []
+        for rg in regs2:
+            students.append(rg['student_name'])
+            if rg['class_name'] not in classes:
+                classes.append(rg['class_name'])
+
+        writer.writerow([r['teacher_name'], r['username'],
+                         r['club_name'],
+                         _type_label(r['club_type']),
+                         _club_grade_label(r['club_type'], r['club_grade']),
+                         _category_label(r['category']),
+                         r['location'] or '',
+                         r['schedule'] or '',
+                         len(students),
+                         '、'.join(classes),
+                         '、'.join(students)])
+
+    output = buf.getvalue()
+    data = output.encode('utf-8-sig')
+    resp = make_response(data)
+    resp.headers['Content-Type'] = 'text/csv; charset=utf-8'
+    resp.headers['Content-Disposition'] = 'attachment; filename="teachers_teaching_info.csv"'
+    return resp
+
+
 # ---------- 管理员：巡课人员账号管理 ----------
 # 巡课人员账号管理页（创建/列表/删除）
 @app.route('/admin/inspectors')
