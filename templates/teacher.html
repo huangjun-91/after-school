@@ -164,7 +164,7 @@
                 「{{ b['name'] }}」({{ b['count'] }}人){{ '；' if not loop.last }}
               {% endfor %}
             </span>
-            <button class="btn btn-secondary" disabled title="补齐所有项目到 2-4 人后才能提交">提交本班报名</button>
+            <button class="btn btn-secondary" disabled title="补齐未填报/人数不足的项目（每项至少 {{ PERCLASS_MIN_EXTRA }} 人）后才能提交">提交本班报名</button>
           {% endif %}
         {% endif %}
       </div>
