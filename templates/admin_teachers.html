@@ -102,6 +102,21 @@
             ⬇ 导出教师任教信息
           </a>
         </div>
+        <!-- 搜索栏：按教师姓名/账号快速查找并查看任教情况 -->
+        <form method="get" action="{{ url_for('admin_teachers') }}" class="card-body py-2 border-bottom">
+          <div class="d-flex gap-2 align-items-center">
+            <span class="small fw-bold">🔍 搜索教师：</span>
+            <input type="text" name="q" value="{{ q or '' }}" class="form-control form-control-sm"
+                   style="max-width:260px" placeholder="输入教师姓名或账号，如：王 / wang">
+            <button class="btn btn-sm btn-primary">查找</button>
+            {% if q %}
+              <a href="{{ url_for('admin_teachers') }}" class="btn btn-sm btn-outline-danger">✕ 清除</a>
+            {% endif %}
+            {% if q and teachers|length == 1 %}
+              <span class="small text-success">已定位 1 位教师，点击右侧「📋 任教情况」查看任教明细</span>
+            {% endif %}
+          </div>
+        </form>
         <div class="table-responsive">
           <table class="table table-sm align-middle mb-0">
             <thead><tr><th>姓名</th><th>账号</th><th>密码</th><th>擅长学科</th><th>任教社团</th><th>操作</th></tr></thead>
@@ -122,11 +137,17 @@
                   {% set tclubs = teacher_clubs_map.get(t['id'], []) %}
                   {% if tclubs %}
                     {% for tc in tclubs %}
-                      <span class="badge {% if tc['type']=='premium' %}text-bg-warning{% else %}text-bg-secondary{% endif %} me-1">{{ tc['name'] }}</span>
+                      <span class="badge {% if tc['type']=='premium' %}text-bg-warning{% else %}text-bg-secondary{% endif %} me-1"
+                            title="{% if tc['location'] %}📍{{ tc['location'] }}{% endif %}{% if tc['schedule'] %} 🕐{{ tc['schedule'] }}{% endif %} {% if tc['teacher'] %}👩‍🏫{{ tc['teacher'] }}{% endif %} 在报{{ tc['cnt'] }}人">
+                        {{ tc['name'] }}
+                      </span>
                     {% endfor %}
                   {% else %}<span class="text-muted small">未任教</span>{% endif %}
                 </td>
-                <td>
+                <td class="text-nowrap">
+                  <button type="button" class="btn btn-sm btn-outline-success"
+                          data-bs-toggle="modal" data-bs-target="#teachModal{{ t['id'] }}"
+                          title="查看该教师的任教情况（课程、地点、时间、学生）">📋 任教情况</button>
                   <form method="post" action="{{ url_for('admin_teacher_delete', tid=t['id']) }}"
                         class="d-inline" onsubmit="return confirm('删除教师账号「{{ t['name'] }}」及其任教关联？')">
                     <button class="btn btn-sm btn-outline-danger">删除</button>
@@ -134,6 +155,11 @@
                 </td>
               </tr>
               {% endfor %}
+              {% if teachers|length == 0 %}
+              <tr><td colspan="6" class="text-center text-muted py-3">
+                {% if q %}未找到与「{{ q }}」匹配的教师{% else %}暂无教师账号{% endif %}
+              </td></tr>
+              {% endif %}
             </tbody>
           </table>
         </div>
@@ -152,5 +178,57 @@
     </div>
   </div>
 </div>
+
+<!-- 任教情况详情模态框 -->
+{% for t in teachers %}
+<div class="modal fade" id="teachModal{{ t['id'] }}" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">📋 教师任教情况 — {{ t['name'] }}（{{ t['username'] }}）</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        {% set tclubs = teacher_clubs_map.get(t['id'], []) %}
+        {% if tclubs %}
+          <p class="small text-muted">任教 {{ tclubs|length }} 个社团。在报人数口径：报名中+已通过。</p>
+          <div class="table-responsive">
+            <table class="table table-sm align-middle">
+              <thead>
+                <tr><th>课程(社团)</th><th>类型/年级</th><th>分类</th><th>上课地点</th><th>上课时间</th><th>在报/上限</th><th>状态</th></tr>
+              </thead>
+              <tbody>
+                {% for tc in tclubs %}
+                <tr>
+                  <td>{{ tc['name'] }}</td>
+                  <td>
+                    <span class="badge {% if tc['type']=='premium' %}text-bg-warning{% else %}text-bg-secondary{% endif %}">
+                      {{ '精品' if tc['type']=='premium' else '普通' }}</span>
+                    <span class="ms-1">{{ tc['grade'] or '全校' }}</span>
+                  </td>
+                  <td>{{ tc['category'] or '—' }}</td>
+                  <td>📍{{ tc['location'] or '—' }}</td>
+                  <td>🕐{{ tc['schedule'] or '—' }}</td>
+                  <td><span class="fw-bold">{{ tc['cnt'] }}</span>/{{ tc['max_students'] }}</td>
+                  <td>
+                    {% if tc['is_active'] %}<span class="badge text-bg-success">开放</span>
+                    {% else %}<span class="badge text-bg-danger">已关闭</span>{% endif %}
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          <p class="small text-muted mt-2 mb-0">
+            💡 如需某社团的具体学生名单，可勾选该社团后在「社团管理」用「导出勾选项目」下载，或使用「⬇ 导出教师任教信息」整批导出。
+          </p>
+        {% else %}
+          <p class="text-muted mb-0">该教师当前未任教任何社团。</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endfor %}
 </body>
 </html>
