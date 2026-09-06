@@ -122,9 +122,9 @@
       <!-- 批量审核选中的记录 -->
       <form method="post" action="{{ url_for('admin_registrations_batch') }}" class="d-flex align-items-center gap-2 flex-wrap">
         <span class="small text-muted">对勾选的记录：</span>
-        <button type="submit" name="status" value="approved" class="btn btn-sm btn-success">✔ 批量通过</button>
-        <button type="submit" name="status" value="rejected" class="btn btn-sm btn-outline-danger">✖ 批量拒绝</button>
-        <button type="submit" name="status" value="pending" class="btn btn-sm btn-outline-secondary">↩ 批量设为待定</button>
+        <button type="submit" form="batchForm" name="status" value="approved" class="btn btn-sm btn-success">✔ 批量通过</button>
+        <button type="submit" form="batchForm" name="status" value="rejected" class="btn btn-sm btn-outline-danger">✖ 批量拒绝</button>
+        <button type="submit" form="batchForm" name="status" value="pending" class="btn btn-sm btn-outline-secondary">↩ 批量设为待定</button>
         <span class="form-text ms-2">勾选任意条后点上方按钮；不勾选直接点"一键通过/拒绝全部"则处理所有待审核。</span>
       </form>
     </div>
@@ -168,12 +168,27 @@
   </div>
 </div>
 
-<!-- 批量审核表单：收集勾选的记录 id -->
-<form id="batchForm" method="post" action="{{ url_for('admin_registrations_batch') }}" class="d-none"></form>
+<!-- 批量审核表单：收集勾选的记录 id（点击上方按钮经 form 属性提交此表单） -->
+<form id="batchForm" method="post" action="{{ url_for('admin_registrations_batch') }}"
+      class="d-none" onsubmit="return confirmBatchSubmit();"></form>
 
 <script>
   function toggleAll(master) {
     document.querySelectorAll('.reg-check').forEach(function(cb){ cb.checked = master.checked; });
+  }
+  // 批量按钮点击守卫：必须勾选>=1 条才提交，避免误触"拒绝全部"
+  function confirmBatchSubmit() {
+    var checked = document.querySelectorAll('.reg-check:checked');
+    if (checked.length === 0) {
+      alert('请先勾选要审核的报名记录（勾选任意条后再点批量按钮）。');
+      return false;
+    }
+    var act = document.activeElement;
+    var label = (act && act.value === 'approved') ? '通过' : (act && act.value === 'rejected') ? '拒绝' : '设为待定';
+    if (!confirm('确定对勾选的 ' + checked.length + ' 条记录执行「' + label + '」吗？')) {
+      return false;
+    }
+    return true;
   }
   function applyFilter() {
     var st = document.getElementById('filtStatus').value;
