@@ -1267,6 +1267,66 @@ def admin_clubs_batch_toggle():
     return redirect(url_for('admin_dashboard'))
 
 
+# 导出社团信息（勾选的项目）：含任课教师、上课地点、上课时间、学生名单
+# 用法：GET /admin/clubs/export?ids=1,2,3（ids 为勾选的社团id）；
+#       不带 ids 时导出全部社团。返回 UTF-8(BOM) CSV。
+@app.route('/admin/clubs/export')
+def admin_clubs_export():
+    if not session.get('role') == 'admin':
+        return redirect(url_for('login'))
+    db = get_db()
+
+    ids_str = request.args.get('ids', '').strip()
+    ids = [i for i in ids_str.split(',') if i.isdigit()]
+    if ids:
+        placeholders = ','.join('?' * len(ids))
+        rows = db.execute(
+            f'''SELECT c.* FROM clubs c WHERE c.id IN ({placeholders}) ORDER BY c.type DESC, c.id''',
+            ids).fetchall()
+    else:
+        rows = db.execute('SELECT c.* FROM clubs c ORDER BY c.type DESC, c.id').fetchall()
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(['社团名称', '类型', '年级/范围', '分类', '任课教师', '上课地点',
+                     '上课时间', '人数上限', '当前报名', '授课班级', '学生名单', '状态'])
+    for c in rows:
+        type_label = '精品' if c['type'] == 'premium' else '普通'
+        scope = '全校' if c['type'] == 'premium' else (c['grade'] or '')
+        status = '开放' if c['is_active'] else '已关闭'
+
+        # 该社团学生名单：报名中+已通过（与列表人数口径一致），带班级
+        regs = db.execute('''
+            SELECT r.student_name, a.class_name,
+                   CASE r.status WHEN 'approved' THEN '已通过'
+                                 WHEN 'pending' THEN '待审核'
+                                 ELSE '已拒绝' END AS st
+            FROM registrations r
+            JOIN class_accounts a ON r.class_id = a.id
+            WHERE r.club_id=? AND r.status IN ('pending','approved')
+            ORDER BY a.class_name, r.student_name
+        ''', (c['id'],)).fetchall()
+        students = ['%s(%s)' % (r['student_name'], r['class_name']) for r in regs]
+        classes = []
+        for r in regs:
+            if r['class_name'] not in classes:
+                classes.append(r['class_name'])
+
+        writer.writerow([c['name'], type_label, scope,
+                         c['category'] or '',
+                         c['teacher'] or '', c['location'] or '', c['schedule'] or '',
+                         c['max_students'], len(regs),
+                         '、'.join(classes), '；'.join(students), status])
+
+    output = buf.getvalue()
+    data = output.encode('utf-8-sig')
+    resp = make_response(data)
+    resp.headers['Content-Type'] = 'text/csv; charset=utf-8'
+    resp.headers['Content-Disposition'] = ('attachment; filename="clubs_roster.csv"'
+                                           if ids else 'attachment; filename="clubs_all.csv"')
+    return resp
+
+
 # 管理员：编辑单个社团内容（项目名称、类型、年级、授课教师、上课地点、上课时间、人数上限、简介）
 @app.route('/admin/club/edit/<int:cid>', methods=['POST'])
 def admin_club_edit(cid):
