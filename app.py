@@ -2611,7 +2611,8 @@ def admin_export():
         SELECT a.class_name, r.grade, r.student_name,
                c.name AS club_name, c.type AS club_type,
                CASE WHEN c.type='premium' THEN '全校' ELSE c.grade END AS club_grade,
-               r.status, r.created_at
+               r.status, r.created_at,
+               c.teacher AS club_teacher, c.location AS club_location, c.schedule AS club_schedule
         FROM registrations r
         JOIN clubs c ON r.club_id = c.id
         JOIN class_accounts a ON r.class_id = a.id
@@ -2620,11 +2621,13 @@ def admin_export():
 
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(['班级', '学生年级', '学生姓名', '社团名称', '社团类型', '社团年级', '状态', '报名时间'])
+    writer.writerow(['班级', '学生年级', '学生姓名', '社团名称', '社团类型', '社团年级', '状态',
+                     '报名时间', '授课教师', '上课地点', '上课时间'])
     for r in rows:
         writer.writerow([r['class_name'], r['grade'], r['student_name'],
                          r['club_name'], '精品' if r['club_type'] == 'premium' else '普通',
-                         r['club_grade'], r['status'], r['created_at']])
+                         r['club_grade'], r['status'], r['created_at'],
+                         r['club_teacher'], r['club_location'], r['club_schedule']])
 
     output = buf.getvalue()
     data = output.encode('utf-8-sig')
